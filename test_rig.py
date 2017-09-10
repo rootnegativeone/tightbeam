@@ -1,24 +1,34 @@
 # test 1 (fail)
-# display QR code sequence that contains init and payload strings
+# display glyph sequence that contains init, payload, and end strings
 
 # test 2 (fail)
-# output string(s) from QR code sequence
+# output string(s) from glyph sequence
 
 # test 3 (fail)
-# decompose 5 MB JPEG, display QR code sequence, render same image on display
+# decompose 5 MB JPEG, display glyph sequence, render same image on display
 
-from transceiver import Transmit
-from transceiver import Receive
+import transceiver
 
 # test 1:
-# code = u"06349108765300123400000000123456789124"
-# code1 = u"\u0080R0E0404."
+payload = u"06349108765300123400000000123456789124"
+beep_off = u"\u0080R0E0400."
+factory_default = u"\u0080RD9FF50."
 # payload is an ordinary string of size 512 bytes and length 491
 # payload = "gloqmzwocvampmiqmimejltxgljqmauehpxkcfhnquljxhaojtvzamzbruofqkmbdlokpthlvsjmcbuefuvjltizcloyneppyubmuslycdnrctvmqmjqqxaseftrgbovohcfumiyzxyzgigotuzbdqofdhegsxbyyfwaelhhgzyoczixnxlrvqznqpemolpxljlwqchlwvwjgjaqanbocjdwmnhojdminwkddgtbljwwaxsgadlqiscpehllqjiupnumgdxlkaliogkwqpluvvrgxxzrwlkqsxzvurotoymoqetltgvobpatfhisszvtsjsbcbhrplbopnoffzgdjkcbpbpnnotxnjyysezkmgplcwczfraommjbxdkiitiweopkotjjxhwhtexhawzcoszvitramgsdwibtyflozyhlbeinudraxaczcotvhqydummeqkeqcpvvzodegtxaszkvqjlxhcrurayduqzasxf"
-# TODO: figure out how to import the functions from transmit.py and receive.py
+# decision: do not need to figure out how to import the functions from transceiver.py for now. May need to later.
 
-# Transmit().encode_from_string(payload)
-# Transmit().display_qr_from_file()  # step 2?
+# test creates list of init, payload, and end strings, calls function to encode and list objects, then calls function
+# to render the glyphs
+test1 = [beep_off, payload, factory_default]
+glyph_list = transceiver.encode_glyph_from_string(test1)
+transceiver.display_glyph(glyph_list)
+
+#transceiver.display_glyph(glyph_list)
+
+
+
+
+
 
 # test 2:
 # filename = u"/user/Downloads/daily_bread.jpg"
