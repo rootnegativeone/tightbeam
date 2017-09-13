@@ -2,7 +2,6 @@
 
 # ---------------------------------------------------------------------------------------------------------------
 # Transmit
-# TODO: parameter string dictionary
 # TODO: string sequencer that sends QR codes for encoding
 
 import pylab
@@ -17,14 +16,20 @@ def sequence_strings_for_encoding():
     pass
 
 
+payload = "gloqmzwocvampmiqmimejltxgljqmauehpxkcfhnquljxhaojtvzamzbruofqkmbdlokpthlvsjmcbuefuvjltizcloyneppyubmuslycdnrctvmqmjqqxaseftrgbovohcfumiyzxyzgigotuzbdqofdhegsxbyyfwaelhhgzyoczixnxlrvqznqpemolpxljlwqchlwvwjgjaqanbocjdwmnhojdminwkddgtbljwwaxsgadlqiscpehllqjiupnumgdxlkaliogkwqpluvvrgxxzrwlkqsxzvurotoymoqetltgvobpatfhisszvtsjsbcbhrplbopnoffzgdjkcbpbpnnotxnjyysezkmgplcwczfraommjbxdkiitiweopkotjjxhwhtexhawzcoszvitramgsdwibtyflozyhlbeinudraxaczcotvhqydummeqkeqcpvvzodegtxaszkvqjlxhcrurayduqzasxf"
 # TODO: break up long payload strings (>100 characters) in to sequence of glyphs
-def digest_payload():
+def digest_payload(string, length):
     # ingest long string (>100 characters)
     # split into 100 character strings
     # append to list of strings (iterable?)
     # return list of strings
-    pass
+    generator = (string[0 + i:length + i] for i in range(0, len(string), length))
+    return list(generator)
 
+#digest_payload(payload, 50)
+
+#for i in digest_payload(payload,50):
+ #   return i
 
 # loops through list of strings to create list of glyph objects
 glyph_list = []
