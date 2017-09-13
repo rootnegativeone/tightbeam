@@ -27,7 +27,7 @@ test1 = [
     transceiver.parameter_dictionary('Scanning Mode Setting (Continue scanning)'),
     transceiver.parameter_dictionary('Reading Interval Time Setting (1000 ms)'),
     transceiver.parameter_dictionary('Image Stable Time Setting (100 ms)'),
-] + transceiver.digest_payload(payload, 50) + [transceiver.parameter_dictionary('Factory Default')]
+] + transceiver.digest_payload(payload, 100) + [transceiver.parameter_dictionary('Factory Default')]
 
 glyph_list = transceiver.encode_glyph_from_string(test1)
 transceiver.display_glyph(glyph_list)
