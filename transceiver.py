@@ -1,19 +1,49 @@
 
+# TODO: have to figure out how to make this a class to instantiate objects for access by member functions
+""" example
+class Spam:
+    def oneFunction(self,lists):
+       category=random.choice(list(lists.keys()))
+        self.word=random.choice(lists[category])
+
+    def anotherFunction(self):
+        for letter in self.word:
+        print("_",end=" ")
+
+Once you make a Class you have to Instantiate it to an Object and access the member functions.
+
+s = Spam()
+s.oneFunction(lists)
+s.anotherFunction()
+"""
+
 
 # ---------------------------------------------------------------------------------------------------------------
 # Transmit
-# TODO: string sequencer that sends QR codes for encoding
 
 import pylab
 import pyqrcode
 # http://pythonhosted.org/PyQRCode/moddoc.html
 
 
-def sequence_strings_for_encoding():
+def sequence_strings_for_encoding(payload, size):
+    # initialize empty string to hold list for encoding
+    string_list = []
+
     # pull init strings from dictionary, save to list
+    string_list.append(parameter_dictionary('Beep Off'))
+    string_list.append(parameter_dictionary('Scanning Mode Setting (Continue scanning)'))
+    string_list.append(parameter_dictionary('Reading Interval Time Setting (1000 ms)'))
+    string_list.append(parameter_dictionary('Image Stable Time Setting (100 ms)'))
+    #print string_list
+
     # add payload, digest payload, save to list
+    for j in digest_payload(payload, size):
+        string_list.append(j)
+
     # pull end strings from dictionary, save to list
-    pass
+    string_list.append(parameter_dictionary('Factory Default'))
+    return string_list
 
 
 def digest_payload(string, length):
@@ -22,13 +52,14 @@ def digest_payload(string, length):
     # create generator to loop through 100 character strings until the end
     # return list of strings in generator
     generator = (string[0 + i:length + i] for i in range(0, len(string), length))
-    return list(generator)
+    for i in generator:
+        yield i
 
 
 # loops through list of strings to create list of glyph objects
-glyph_list = []
-def encode_glyph_from_string(text_list):
-    for i in text_list:
+def encode_glyph_from_string(string_list):
+    glyph_list = []
+    for i in string_list:
         glyph_list.append(pyqrcode.create(i))
         # glyph.png('/user/Downloads/test_glyph_3.png', scale=6, quiet_zone=4) #  module_color=[0, 0, 0, 128], background=[0xff, 0xff, 0xcc])
     return glyph_list
@@ -41,6 +72,7 @@ def display_glyph(glyph_list):
         print glyph_list[index]
     # TODO: find better way of encoding and rendering glyphs (pyplot? writeable stream?)
     # goal: loop through list of glyph objects and show each in the same window
+
 
 # TODO: method that encodes string to base64 for pictures
 # TODO: method to display QR code from base64 - convert PNG to base64
