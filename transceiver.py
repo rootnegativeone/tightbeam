@@ -21,10 +21,15 @@ s.anotherFunction()
 # ---------------------------------------------------------------------------------------------------------------
 # Transmit
 
-import pylab
 import pyqrcode
-# http://pythonhosted.org/PyQRCode/moddoc.html
+import io
+import rsvg
+import gtk
+import time
+import imageio
 
+
+# http://pythonhosted.org/PyQRCode/moddoc.html
 
 def sequence_strings_for_encoding(payload, size):
     # initialize empty string to hold list for encoding
@@ -65,13 +70,71 @@ def encode_glyph_from_string(string_list):
     return glyph_list
 
 
-# displays glyphs in list in sequence
+# TODO: find better way of encoding and rendering glyphs (pyplot? writeable stream?)
+# goal: loop through list of glyph objects and show each in the same window
+# refactored display_glyph, which displays glyphs in list in sequence
 def display_glyph(glyph_list):
+    window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+    window.set_title("transmission")
+    window.set_position(gtk.WIN_POS_CENTER)
+    #window.connect("delete_event", self.close_application)
+    window.set_border_width(10)
+    window.show()
+    # create the main window, and attach delete_event signal to terminating
+    # the application
+
+    png_stream_list = []
     for index, values in enumerate(glyph_list):
-        glyph_list[index].show(quiet_zone=4, scale=6, wait=1)
-        print glyph_list[index]
-    # TODO: find better way of encoding and rendering glyphs (pyplot? writeable stream?)
-    # goal: loop through list of glyph objects and show each in the same window
+        # somehow show glyph_list[index] as SVG
+        glyph = glyph_list[index]
+        glyph_buffer = io.BytesIO()
+        glyph.png(glyph_buffer, scale=3)
+        png_stream = glyph_buffer.getvalue()
+        png_stream_list.append(png_stream)
+
+
+    with imageio.get_writer('/user/Downloads/test1.gif', mode='I') as writer:
+        for i in png_stream_list:
+            i = imageio.imread(i)
+            writer.append_data(i)
+
+    gif_buffer = io.BytesIO()
+    with imageio.get_writer(gif_buffer, format='.gif', mode='?') as writer:
+        for i in png_stream_list:
+            i = imageio.imread(i)
+            writer.append_data(i)
+
+    gif_buffer = gif_buffer.getvalue()
+
+    #gif_buffer = imageio.mimread(gif_buffer, 'gif')
+
+    # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
+    # A gtk.gdk.PixbufLoader provides a way for applications to drive the process of loading an image, by letting
+    # #them send the image data directly to the loader instead of having the loader read the data from a file.
+
+    pixbufanim = gtk.gdk.PixbufLoader()
+    pixbufanim.write(gif_buffer)
+    pixbufanim.close()
+    pixbufanim = pixbufanim.get_animation()
+    pixbufanim = pixbufanim.get_iter()
+    print pixbufanim
+    pixbuf = pixbufanim.get_pixbuf()
+    print pixbuf
+    image = gtk.Image()
+    image.set_from_animation(pixbuf)
+    image.show()
+
+
+    window.add(image)
+    gtk.main()
+    window.connect("delete-event", Gtk.main_quit)
+
+
+
+    # find GIF to use as input to build animation function using gdk_pixbuf_animation_new_from_file ()
+    # find a way to pull from resource or stream instead
+    # maybe want to create a GIF from the SVG XML data?
+
 
 
 # TODO: method that encodes string to base64 for pictures
