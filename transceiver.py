@@ -70,34 +70,31 @@ def encode_glyph_from_string(string_list):
     return glyph_list
 
 
-# TODO: find better way of encoding and rendering glyphs (pyplot? writeable stream?)
-# goal: loop through list of glyph objects and show each in the same window
-# refactored display_glyph, which displays glyphs in list in sequence
+# TODO: find better way of encoding and rendering glyphs (riteable stream)
+# purpose: loop through list of glyph objects and show each in the same window
 def display_glyph(glyph_list):
-    window = gtk.Window(gtk.WINDOW_TOPLEVEL)
-    window.set_title("transmission")
-    window.set_position(gtk.WIN_POS_CENTER)
-    #window.connect("delete_event", self.close_application)
-    window.set_border_width(10)
-    window.show()
-    # create the main window, and attach delete_event signal to terminating
-    # the application
 
+    # create list for stream objects then loop through list of glyphs
+    # encode PNG stream objects and save to list
     png_stream_list = []
     for index, values in enumerate(glyph_list):
         # somehow show glyph_list[index] as SVG
         glyph = glyph_list[index]
         glyph_buffer = io.BytesIO()
-        glyph.png(glyph_buffer, scale=3)
+        glyph.png(glyph_buffer, scale=5)
         png_stream = glyph_buffer.getvalue()
         png_stream_list.append(png_stream)
 
-
+    # to file: loop through PNG stream object list to create GIF and save to file
     with imageio.get_writer('/user/Downloads/test1.gif', mode='I') as writer:
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
 
+    # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
+    # get values from gif object in buffer
+    # create image buffer and send values from gif object to loader
+    # close stream then create animation object
     gif_buffer = io.BytesIO()
     with imageio.get_writer(gif_buffer, format='.gif', mode='?') as writer:
         for i in png_stream_list:
@@ -106,35 +103,28 @@ def display_glyph(glyph_list):
 
     gif_buffer = gif_buffer.getvalue()
 
-    #gif_buffer = imageio.mimread(gif_buffer, 'gif')
-
-    # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
-    # A gtk.gdk.PixbufLoader provides a way for applications to drive the process of loading an image, by letting
-    # #them send the image data directly to the loader instead of having the loader read the data from a file.
-
-    pixbufanim = gtk.gdk.PixbufLoader()
+    pixbufanim = gtk.gdk.PixbufLoader() # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
     pixbufanim.write(gif_buffer)
     pixbufanim.close()
-    pixbufanim = pixbufanim.get_animation()
-    pixbufanim = pixbufanim.get_iter()
-    print pixbufanim
-    pixbuf = pixbufanim.get_pixbuf()
-    print pixbuf
-    image = gtk.Image()
-    image.set_from_animation(pixbuf)
-    image.show()
 
+    pixbufanim = pixbufanim.get_animation()
+    #pixbufanim = pixbufanim.get_iter()
+
+
+    # open window, update the settings for that window, show it, then create and show the animation taken from
+    # the animation object
+    window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+    window.set_title("transmission")
+    window.set_position(gtk.WIN_POS_CENTER)
+    window.set_border_width(10)
+    window.show()
+    image = gtk.Image()
+    image.set_from_animation(pixbufanim)
+    image.show()
 
     window.add(image)
     gtk.main()
     window.connect("delete-event", Gtk.main_quit)
-
-
-
-    # find GIF to use as input to build animation function using gdk_pixbuf_animation_new_from_file ()
-    # find a way to pull from resource or stream instead
-    # maybe want to create a GIF from the SVG XML data?
-
 
 
 # TODO: method that encodes string to base64 for pictures
