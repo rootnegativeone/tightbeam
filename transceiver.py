@@ -23,11 +23,10 @@ s.anotherFunction()
 
 import pyqrcode
 import io
-import rsvg
 import gtk
 import time
 import imageio
-
+import png
 
 # http://pythonhosted.org/PyQRCode/moddoc.html
 
@@ -52,10 +51,10 @@ def sequence_strings_for_encoding(payload, size):
 
 
 def digest_payload(string, length):
-    # ingest long string (>100 characters)
-    # split into 100 character strings
-    # create generator to loop through 100 character strings until the end
-    # return list of strings in generator
+    # ingest long string
+    # split into smaller strings using length value passed in
+    # create generator to loop through the smaller strings until the end
+    # return list of smaller strings in generator
     generator = (string[0 + i:length + i] for i in range(0, len(string), length))
     for i in generator:
         yield i
@@ -76,37 +75,56 @@ def display_glyph(glyph_list):
 
     # create list for stream objects then loop through list of glyphs
     # encode PNG stream objects and save to list
+    size_list = []
     png_stream_list = []
     for index, values in enumerate(glyph_list):
         # somehow show glyph_list[index] as SVG
         glyph = glyph_list[index]
         glyph_buffer = io.BytesIO()
         glyph.png(glyph_buffer, scale=5)
+        # attempting to get PNG size to determine biggest
+        size = glyph.get_png_size()
+        size_list.append(size)
         png_stream = glyph_buffer.getvalue()
         png_stream_list.append(png_stream)
 
+    max_png_size = max(size_list)
+    max_png_size *= 5
+
+    s = [[0 for y in range(max_png_size)] for x in range(max_png_size)]
+    s = map(lambda x: map(int, x), s)
+
+    f = open('/user/Downloads/png.png', 'wb')
+    w = png.Writer(len(s[0]), len(s), greyscale=True, bitdepth=1)
+    w.write(f, s)
+    f.close()
+
     # to file: loop through PNG stream object list to create GIF and save to file
-    with imageio.get_writer('/user/Downloads/test1.gif', mode='I') as writer:
+    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=0, fps=1) as writer:
+        # add initial image to get correct size
+        a = imageio.imread('/user/Downloads/png.png')
+        writer.append_data(a)
+        # loop through stream list
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
 
     # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
     # get values from gif object in buffer
-    # create image buffer and send values from gif object to loader
-    # close stream then create animation object
     gif_buffer = io.BytesIO()
-    with imageio.get_writer(gif_buffer, format='.gif', mode='?') as writer:
+    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=15) as writer:
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
 
     gif_buffer = gif_buffer.getvalue()
 
-    pixbufanim = gtk.gdk.PixbufLoader() # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
+
+    # create image buffer and send values from gif object to loader
+    # close stream then create animation object
+    pixbufanim = gtk.gdk.PixbufLoader()  # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
     pixbufanim.write(gif_buffer)
     pixbufanim.close()
-
     pixbufanim = pixbufanim.get_animation()
     #pixbufanim = pixbufanim.get_iter()
 
