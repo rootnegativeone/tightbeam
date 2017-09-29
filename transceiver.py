@@ -35,18 +35,18 @@ def sequence_strings_for_encoding(payload, size):
     string_list = []
 
     # pull init strings from dictionary, save to list
-    string_list.append(parameter_dictionary('Beep Off'))
-    string_list.append(parameter_dictionary('Scanning Mode Setting (Continue scanning)'))
-    string_list.append(parameter_dictionary('Reading Interval Time Setting (1000 ms)'))
-    string_list.append(parameter_dictionary('Image Stable Time Setting (100 ms)'))
-    #print string_list
+    #string_list.append(parameter_dictionary('Beep Off'))
+    #string_list.append(parameter_dictionary('Scanning Mode Setting (Continue scanning)'))
+    #string_list.append(parameter_dictionary('Reading Interval Time Setting (500 ms)'))
+    #string_list.append(parameter_dictionary('Single Scan Duration Setting (No duration)'))
+    #string_list.append(parameter_dictionary('Image Stable Time Setting (100 ms)'))
 
     # add payload, digest payload, save to list
     for j in digest_payload(payload, size):
         string_list.append(j)
 
     # pull end strings from dictionary, save to list
-    string_list.append(parameter_dictionary('Factory Default'))
+    #string_list.append(parameter_dictionary('Factory Default'))
     return string_list
 
 
@@ -69,7 +69,7 @@ def encode_glyph_from_string(string_list):
     return glyph_list
 
 
-# TODO: find better way of encoding and rendering glyphs (riteable stream)
+# TODO: find better way of encoding and rendering glyphs (writeable stream)
 # purpose: loop through list of glyph objects and show each in the same window
 def display_glyph(glyph_list):
 
@@ -81,26 +81,30 @@ def display_glyph(glyph_list):
         # somehow show glyph_list[index] as SVG
         glyph = glyph_list[index]
         glyph_buffer = io.BytesIO()
-        glyph.png(glyph_buffer, scale=5)
+        glyph.png(glyph_buffer, scale=7)
         # attempting to get PNG size to determine biggest
         size = glyph.get_png_size()
         size_list.append(size)
         png_stream = glyph_buffer.getvalue()
         png_stream_list.append(png_stream)
 
+    # TODO: create function for pulling sizing PNG
+    # TODO: import pyrcode.png scale variable as parameter for max PNG size value
     max_png_size = max(size_list)
-    max_png_size *= 5
+    max_png_size *= 7
 
     s = [[0 for y in range(max_png_size)] for x in range(max_png_size)]
     s = map(lambda x: map(int, x), s)
 
+    # TODO: change from write to file to write to buffer
     f = open('/user/Downloads/png.png', 'wb')
     w = png.Writer(len(s[0]), len(s), greyscale=True, bitdepth=1)
     w.write(f, s)
     f.close()
 
+    # TODO: change from read from file for PNG to read from buffer
     # to file: loop through PNG stream object list to create GIF and save to file
-    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=0, fps=1) as writer:
+    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=1, fps=15) as writer:
         # add initial image to get correct size
         a = imageio.imread('/user/Downloads/png.png')
         writer.append_data(a)
@@ -109,6 +113,7 @@ def display_glyph(glyph_list):
             i = imageio.imread(i)
             writer.append_data(i)
 
+    # TODO: add PNG as initial image to force correct window size
     # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
     # get values from gif object in buffer
     gif_buffer = io.BytesIO()
@@ -119,7 +124,6 @@ def display_glyph(glyph_list):
 
     gif_buffer = gif_buffer.getvalue()
 
-
     # create image buffer and send values from gif object to loader
     # close stream then create animation object
     pixbufanim = gtk.gdk.PixbufLoader()  # https://developer.gnome.org/pygtk/stable/class-gdkpixbufloader.html
@@ -127,7 +131,6 @@ def display_glyph(glyph_list):
     pixbufanim.close()
     pixbufanim = pixbufanim.get_animation()
     #pixbufanim = pixbufanim.get_iter()
-
 
     # open window, update the settings for that window, show it, then create and show the animation taken from
     # the animation object
@@ -198,16 +201,69 @@ def parameter_dictionary(parameter):
 #output: payload or error codes
 
 import zbar
+import qrtools
+import cv2
+
+video = '/user/Downloads/test2.mp4'
+
+def parse_QR_code_from_video_stream(video):
+    # import mp4 file from storage
+    # parse each frame of video and return in a sequence
+    # https://stackoverflow.com/questions/18954889/how-to-process-images-of-a-video-frame-by-frame-in-video-streaming-using-opencv
+    # TODO: rewrite this to remove superfluous notation
+    # TODO: need to access arbitrary frame and display it
+
+    #video = '/user/Downloads/test2.mp4'
+
+    capture = cv2.VideoCapture(video)
+    frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)  # 0-based index of the frame to be decoded/captured next
+
+    while True:
+        flag, frame = capture.read()
+        if flag:
+            # frame ready and already captured
+            cv2.imshow('video', frame)
+            frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
+            print str(frame_index) + " frames"
+        else:
+            # next frame is not ready, so wait and try again
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index - 1)
+            print "frame is not ready"
+            cv2.waitKey(1000)
+
+        if cv2.waitKey(10) == 27:
+            break
+        if capture.get(cv2.CAP_PROP_POS_FRAMES) == capture.get(cv2.CAP_PROP_FRAME_COUNT):
+            # stop if number of captured frames equals total number of frames
+            break
+
+    # return stream object with frame
+    capture.release()
 
 
-def get_string_from_glyph_file(glyph):
-    glyph = QR(filename=glyph)
+def decode_frame_into_list(glyph):
+    # take frame and decode it
+    glyph = qrtools.QR(filename='/user/PycharmProjects/transceiver/QR Codes/payload.png')
     if glyph.decode():
         print glyph.data
 
+    # append to list
+    # return list
+    pass
 
-def display_string(text):
-    print text
+def combine_decoded_strings():
+    # concatenate strings in list
+    # return concatenated string
+    pass
+
+
+glyph = '/user/PycharmProjects/transceiver/QR Codes/payload.png'
+def get_string_from_glyph_file(glyph):
+    # get sequence of frames from video
+    # decode QR one at a time
+    glyph = qrtools.QR(filename='/user/PycharmProjects/transceiver/QR Codes/payload.png')
+    if glyph.decode():
+        print glyph.data
 
 
 def decode_QR_code_from_camera():
@@ -239,3 +295,8 @@ def decode_QR_code_from_camera():
 # TODO: create method for decoding barcodes from the camera
 def decode_barcode_from_camera():
     pass
+
+def display_string(text):
+    print text
+
+

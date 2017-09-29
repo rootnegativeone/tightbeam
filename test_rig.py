@@ -8,6 +8,7 @@
 # decompose 5 MB JPEG, display glyph sequence, render same image on display
 
 import transceiver
+import sys
 
 # test 1:
 # test creates list of init, payload, and end strings, calls function to encode and list objects, then calls function
@@ -19,6 +20,8 @@ import transceiver
 
 # payload is an ordinary string of size 512 bytes and length 491
 payload = "gloqmzwocvampmiqmimejltxgljqmauehpxkcfhnquljxhaojtvzamzbruofqkmbdlokpthlvsjmcbuefuvjltizcloyneppyubmuslycdnrctvmqmjqqxaseftrgbovohcfumiyzxyzgigotuzbdqofdhegsxbyyfwaelhhgzyoczixnxlrvqznqpemolpxljlwqchlwvwjgjaqanbocjdwmnhojdminwkddgtbljwwaxsgadlqiscpehllqjiupnumgdxlkaliogkwqpluvvrgxxzrwlkqsxzvurotoymoqetltgvobpatfhisszvtsjsbcbhrplbopnoffzgdjkcbpbpnnotxnjyysezkmgplcwczfraommjbxdkiitiweopkotjjxhwhtexhawzcoszvitramgsdwibtyflozyhlbeinudraxaczcotvhqydummeqkeqcpvvzodegtxaszkvqjlxhcrurayduqzasxf"
+print "character length: " + str(len(payload))
+print "size in bytes: " + str(sys.getsizeof(payload))
 
 # insert payload list into position
 test1 = transceiver.sequence_strings_for_encoding(payload, 38)
@@ -30,7 +33,6 @@ print glyph_list
 
 # display glyphs in sequence
 transceiver.display_glyph(glyph_list)
-
 
 """
 test1 = [
