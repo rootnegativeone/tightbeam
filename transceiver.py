@@ -104,7 +104,7 @@ def display_glyph(glyph_list):
 
     # TODO: change from read from file for PNG to read from buffer
     # to file: loop through PNG stream object list to create GIF and save to file
-    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=1, fps=15) as writer:
+    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=1, fps=14) as writer:
         # add initial image to get correct size
         a = imageio.imread('/user/Downloads/png.png')
         writer.append_data(a)
@@ -117,7 +117,7 @@ def display_glyph(glyph_list):
     # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
     # get values from gif object in buffer
     gif_buffer = io.BytesIO()
-    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=15) as writer:
+    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=14) as writer:
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
@@ -206,52 +206,47 @@ import cv2
 
 video = '/user/Downloads/test2.mp4'
 
-def parse_QR_code_from_video_stream(video):
+def capture_frames_from_video(video):
     # import mp4 file from storage
-    # parse each frame of video and return in a sequence
+    # parse each frame of video and return in a sequence (list)
     # https://stackoverflow.com/questions/18954889/how-to-process-images-of-a-video-frame-by-frame-in-video-streaming-using-opencv
-    # TODO: rewrite this to remove superfluous notation
-    # TODO: need to access arbitrary frame and display it
 
-    #video = '/user/Downloads/test2.mp4'
+    frame_list = []
 
     capture = cv2.VideoCapture(video)
-    frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)  # 0-based index of the frame to be decoded/captured next
-
     while True:
-        flag, frame = capture.read()
-        if flag:
-            # frame ready and already captured
-            cv2.imshow('video', frame)
-            frame_index = capture.get(cv2.CAP_PROP_POS_FRAMES)
-            print str(frame_index) + " frames"
+        ret, frame = capture.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # cv2.imshow('frame', frame)
+            frame_list.append(frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
         else:
-            # next frame is not ready, so wait and try again
-            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index - 1)
-            print "frame is not ready"
-            cv2.waitKey(1000)
-
-        if cv2.waitKey(10) == 27:
-            break
-        if capture.get(cv2.CAP_PROP_POS_FRAMES) == capture.get(cv2.CAP_PROP_FRAME_COUNT):
-            # stop if number of captured frames equals total number of frames
             break
 
-    # return stream object with frame
     capture.release()
+    cv2.destroyAllWindows()
+    return frame_list
 
 
-def decode_frame_into_list(glyph):
-    # take frame and decode it
-    glyph = qrtools.QR(filename='/user/PycharmProjects/transceiver/QR Codes/payload.png')
-    if glyph.decode():
-        print glyph.data
+def decode_frames_into_strings(frame_list):
+    glyph_data_list = []
 
-    # append to list
-    # return list
-    pass
+    # loop through list of frames and decode them, then add them to a list, return that list
+    for i, val in enumerate(frame_list):
+        image = frame_list[i]
+        scanner = zbar.Scanner()
+        results = scanner.scan(image)
+        for result in results:
+            print "frame " + str(i), result.type, result.data, result.quality, result.position
+            glyph_data_list.append(result.data)
 
-def combine_decoded_strings():
+    print glyph_data_list
+    glyph_data = ''.join(glyph_data_list)
+    print glyph_data
+
+def clean_and_concatenate_strings(glyph_data):
     # concatenate strings in list
     # return concatenated string
     pass

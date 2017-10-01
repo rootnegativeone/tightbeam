@@ -1,12 +1,6 @@
 # test 1 (pass)
 # display glyph sequence that contains init, payload (public key), and end strings
 
-# test 2 (fail)
-# output string(s) from glyph sequence
-
-# test 3 (fail)
-# decompose 5 MB JPEG, display glyph sequence, render same image on display
-
 import transceiver
 import sys
 
@@ -34,38 +28,12 @@ print glyph_list
 # display glyphs in sequence
 transceiver.display_glyph(glyph_list)
 
-"""
-test1 = [
-    transceiver.parameter_dictionary('Beep Off'),
-    transceiver.parameter_dictionary('Scanning Mode Setting (Continue scanning)'),
-    transceiver.parameter_dictionary('Reading Interval Time Setting (1000 ms)'),
-    transceiver.parameter_dictionary('Image Stable Time Setting (100 ms)'),
-] + transceiver.digest_payload(payload, 100) + [transceiver.parameter_dictionary('Factory Default')]
-"""
-
-
-
-
-
-# test 2:
-# filename = u"/user/Downloads/daily_bread.jpg"
-# Receive.decode_from_camera()
-# Transmit().read_from_file(filename)
-
-# test 3:
-# small (401 B): /user/.ssh/id_rsa.pub
-# medium (400.3 kB): /user/PycharmProjects/transceiver/Images/license.jpg
-# large (5 MB): TODO: find 5 MB image
-
-# def decode_encode():
-
-
-
-
-
-
-
-
+# test1 = [
+#    transceiver.parameter_dictionary('Beep Off'),
+#    transceiver.parameter_dictionary('Scanning Mode Setting (Continue scanning)'),
+#    transceiver.parameter_dictionary('Reading Interval Time Setting (1000 ms)'),
+#    transceiver.parameter_dictionary('Image Stable Time Setting (100 ms)'),
+#] + transceiver.digest_payload(payload, 100) + [transceiver.parameter_dictionary('Factory Default')]
 
 
 
