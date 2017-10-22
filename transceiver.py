@@ -105,6 +105,7 @@ def display_glyph(glyph_list):
     max_png_size = max(size_list)
     max_png_size *= 7
 
+    # insert comment here to explain how this works
     s = [[0 for y in range(max_png_size)] for x in range(max_png_size)]
     s = map(lambda x: map(int, x), s)
 

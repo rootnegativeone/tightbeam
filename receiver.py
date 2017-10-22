@@ -1,38 +1,24 @@
-# test 2 (fail)
-# output string(s) from glyph sequence
-
 import transceiver
 import sys
 
-# test 2:
-video = '/user/Downloads/VID_20171021_145821.mp4'
+# test 2 (pass) --------------------------------------------------------------------------------------------
+# output string(s) from glyph sequence
+#video = '/user/Downloads/VID_20171021_145821.mp4'
+#frame_list = transceiver.capture_frames_from_video(video)
+#transceiver.decode_frames_into_strings(frame_list)
+
+# test 3 (fail) --------------------------------------------------------------------------------------------
+# decompose 5 MB JPEG, display glyph sequence, render same image on display
+# extra small (401 B; 4 x 10^2): /user/.ssh/id_rsa.pub
+# TODO: refactor so receiver.py can receive and process looping video from transmitter.py
+video = '/user/Downloads/VID_20171022_153304.mp4'
 frame_list = transceiver.capture_frames_from_video(video)
 transceiver.decode_frames_into_strings(frame_list)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# test 3 (fail)
-# decompose 5 MB JPEG, display glyph sequence, render same image on display
-
-# test 3:
-# small (401 B): /user/.ssh/id_rsa.pub
-# medium (400.3 kB): /user/PycharmProjects/transceiver/Images/license.jpg
-# large (5 MB): TODO: find 5 MB image
+# small (5 kB; 5 x 10^3):
+# medium (50 kB; 5 x 10^4):
+# large (400.3 kB; 4 x 10^5): /user/PycharmProjects/transceiver/Images/license.jpg
+# extra large (5 MB; 5 x 10^6): TODO: find 5 MB image
 
 
 
