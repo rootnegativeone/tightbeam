@@ -30,8 +30,21 @@ import png
 
 # http://pythonhosted.org/PyQRCode/moddoc.html
 
+def digest_payload(string, length):
+    # ingest long string
+    # split into smaller strings using length value passed in
+    # create generator to loop through the smaller strings until the end
+    # return list of smaller strings in generator
+    generator = (string[0 + i:length + i] for i in range(0, len(string), length))
+    for i in generator:
+        yield i
+
+
 def sequence_strings_for_encoding(payload, size):
-    # initialize empty string to hold list for encoding
+    # initialize empty list to hold strings for encoding
+    # first is for strings without indices
+    string_list_no_index = []
+    # second is meant to hold strings with added indices
     string_list = []
 
     # pull init strings from dictionary, save to list
@@ -41,23 +54,22 @@ def sequence_strings_for_encoding(payload, size):
     #string_list.append(parameter_dictionary('Single Scan Duration Setting (No duration)'))
     #string_list.append(parameter_dictionary('Image Stable Time Setting (100 ms)'))
 
-    # add payload, digest payload, save to list
+    # iterate over payload generator to obtain strings and append to a list of strings
     for j in digest_payload(payload, size):
-        string_list.append(j)
+        #print j
+        string_list_no_index.append(j)
+
+    # iterate over list and merge index with values using 'enumerate()'
+    # index should be four numbers starting from 0000 to 9999, so pad with zeros to the left with 'zfill()'
+    # append results to empty string list
+    for index, values in enumerate(string_list_no_index):
+        padding = str(index).zfill(4)
+        string_list.append(padding + values)
 
     # pull end strings from dictionary, save to list
     #string_list.append(parameter_dictionary('Factory Default'))
+
     return string_list
-
-
-def digest_payload(string, length):
-    # ingest long string
-    # split into smaller strings using length value passed in
-    # create generator to loop through the smaller strings until the end
-    # return list of smaller strings in generator
-    generator = (string[0 + i:length + i] for i in range(0, len(string), length))
-    for i in generator:
-        yield i
 
 
 # loops through list of strings to create list of glyph objects
@@ -103,6 +115,7 @@ def display_glyph(glyph_list):
     f.close()
 
     # TODO: change from read from file for PNG to read from buffer
+    # TODO: find sample rate of hardware scanner (USB) - will handle serial in v2
     # to file: loop through PNG stream object list to create GIF and save to file
     with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=1, fps=14) as writer:
         # add initial image to get correct size
@@ -116,8 +129,9 @@ def display_glyph(glyph_list):
     # TODO: add PNG as initial image to force correct window size
     # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
     # get values from gif object in buffer
+    # camera frame sample rate is 30 frames per second; therefore, Nyquist frequency is 15 fps (0.5*sample rate).
     gif_buffer = io.BytesIO()
-    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=14) as writer:
+    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=15) as writer:
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
@@ -204,6 +218,10 @@ import zbar
 import qrtools
 import cv2
 
+# TODO: set up video device to trigger listener
+# TODO: capture frames from listener and decode
+# TODO: set up header that describes either how many payload components there will be or somehow PER component
+
 video = '/user/Downloads/test2.mp4'
 
 def capture_frames_from_video(video):
@@ -243,8 +261,17 @@ def decode_frames_into_strings(frame_list):
             glyph_data_list.append(result.data)
 
     print glyph_data_list
-    glyph_data = ''.join(glyph_data_list)
+    # eliminate duplicate entries in glyph_data_list (set?)
+    glyph_data_list = set(glyph_data_list)
+    # sort from 0000 to highest
+    glyph_data_list = sorted(glyph_data_list)
+    print glyph_data_list
+    #remove indices
+    glyph_data = [x[4:] for x in glyph_data_list]
+    # join all items in list and print
+    glyph_data = ''.join(glyph_data)
     print glyph_data
+    print len(glyph_data)
 
 def clean_and_concatenate_strings(glyph_data):
     # concatenate strings in list

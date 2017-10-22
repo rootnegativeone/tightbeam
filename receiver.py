@@ -5,7 +5,7 @@ import transceiver
 import sys
 
 # test 2:
-video = '/user/Downloads/test2.mp4'
+video = '/user/Downloads/VID_20171021_145821.mp4'
 frame_list = transceiver.capture_frames_from_video(video)
 transceiver.decode_frames_into_strings(frame_list)
 
