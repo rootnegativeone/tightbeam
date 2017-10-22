@@ -82,7 +82,8 @@ def encode_glyph_from_string(string_list):
 
 
 # TODO: find better way of encoding and rendering glyphs (writeable stream)
-# purpose: loop through list of glyph objects and show each in the same window
+# purpose: loop through list of glyph objects and show each in the same window (i.e. stream to display)
+# takes list of glyphs, writes to stream, creates PNGs,
 def display_glyph(glyph_list):
 
     # create list for stream objects then loop through list of glyphs
@@ -102,8 +103,9 @@ def display_glyph(glyph_list):
 
     # TODO: create function for pulling sizing PNG
     # TODO: import pyrcode.png scale variable as parameter for max PNG size value
+    # pull largest PNG size and multiply by the scaling factor above
     max_png_size = max(size_list)
-    max_png_size *= 7
+    max_png_size *= 7  # this comes from scale=7 above
 
     # insert comment here to explain how this works
     s = [[0 for y in range(max_png_size)] for x in range(max_png_size)]
@@ -221,9 +223,37 @@ import cv2
 
 # TODO: set up video device to trigger listener
 # TODO: capture frames from listener and decode
-# TODO: set up header that describes either how many payload components there will be or somehow PER component
 
-video = '/user/Downloads/test2.mp4'
+def decode_QR_code_from_camera():
+    # create a Processor
+    proc = zbar.Processor()
+
+    # configure the Processor
+    proc.parse_config('enable')
+
+    # initialize the Processor
+    device = '/dev/video0'
+    proc.init(device)
+
+    # debug only: enable the preview window
+    proc.visible = True
+
+    # read at least one barcode (or until window closed)
+    proc.process_one()
+
+    # debug only: hide the preview window
+    proc.visible = False
+
+    # extract results
+    for symbol in proc.results:
+        # do something useful with results
+        print symbol.data  # what was in this line before: print symbol.data
+        return symbol.data
+
+
+# -----------------------------------------------------------------------------------------------------------------
+# video = '/user/Downloads/test2.mp4'
+
 
 def capture_frames_from_video(video):
     # import mp4 file from storage
@@ -267,17 +297,12 @@ def decode_frames_into_strings(frame_list):
     # sort from 0000 to highest
     glyph_data_list = sorted(glyph_data_list)
     print glyph_data_list
-    #remove indices
+    # remove indices
     glyph_data = [x[4:] for x in glyph_data_list]
     # join all items in list and print
     glyph_data = ''.join(glyph_data)
     print glyph_data
     print len(glyph_data)
-
-def clean_and_concatenate_strings(glyph_data):
-    # concatenate strings in list
-    # return concatenated string
-    pass
 
 
 glyph = '/user/PycharmProjects/transceiver/QR Codes/payload.png'
@@ -287,39 +312,3 @@ def get_string_from_glyph_file(glyph):
     glyph = qrtools.QR(filename='/user/PycharmProjects/transceiver/QR Codes/payload.png')
     if glyph.decode():
         print glyph.data
-
-
-def decode_QR_code_from_camera():
-    # create a Processor
-    proc = zbar.Processor()
-
-    # configure the Processor
-    proc.parse_config('enable')
-
-    # initialize the Processor
-    device = '/dev/video0'
-    proc.init(device)
-
-    # debug only: enable the preview window
-    proc.visible = True
-
-    # read at least one barcode (or until window closed)
-    proc.process_one()
-
-    # debug only: hide the preview window
-    proc.visible = False
-
-    # extract results
-    for symbol in proc.results:
-        # do something useful with results
-        print symbol.data  # what was in this line before: print symbol.data
-        return symbol.data
-
-# TODO: create method for decoding barcodes from the camera
-def decode_barcode_from_camera():
-    pass
-
-def display_string(text):
-    print text
-
-
