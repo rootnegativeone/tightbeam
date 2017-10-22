@@ -120,7 +120,7 @@ def display_glyph(glyph_list):
     # TODO: change from read from file for PNG to read from buffer
     # TODO: find sample rate of hardware scanner (USB) - will handle serial in v2
     # to file: loop through PNG stream object list to create GIF and save to file
-    with imageio.get_writer('/user/Downloads/test1.gif', mode='I', loop=1, fps=14) as writer:
+    with imageio.get_writer('/user/Downloads/test.gif', mode='I', loop=0, fps=10) as writer:
         # add initial image to get correct size
         a = imageio.imread('/user/Downloads/png.png')
         writer.append_data(a)
@@ -208,47 +208,44 @@ def parameter_dictionary(parameter):
 
 # ---------------------------------------------------------------------------------------------------------------
 # Receive
+
+import zbar
+import qrtools
+import cv2
+
 # 1. trigger camera
 # 2. read QR code (step 1 loop)
 # 3. output string (step 2 loop)
 # 4. append to list (step 3 loop)
 # 5. concatenate strings
 # 6. process strings (encode and render)
-
-#output: payload or error codes
-
-import zbar
-import qrtools
-import cv2
-
 # TODO: set up video device to trigger listener
 # TODO: capture frames from listener and decode
 
-def decode_QR_code_from_camera():
-    # create a Processor
-    proc = zbar.Processor()
 
-    # configure the Processor
-    proc.parse_config('enable')
+def capture_frames_from_device():
+    # import mp4 file from storage
+    # parse each frame of video and return in a sequence (list)
+    # https://stackoverflow.com/questions/18954889/how-to-process-images-of-a-video-frame-by-frame-in-video-streaming-using-opencv
 
-    # initialize the Processor
-    device = '/dev/video0'
-    proc.init(device)
+    frame_list = []
 
-    # debug only: enable the preview window
-    proc.visible = True
+    capture = cv2.VideoCapture(0)
+    while True:
+        ret, frame = capture.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            # cv2.imshow('frame', frame)
+            frame_list.append(frame)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        else:
+            break
 
-    # read at least one barcode (or until window closed)
-    proc.process_one()
+    capture.release()
+    cv2.destroyAllWindows()
+    return frame_list
 
-    # debug only: hide the preview window
-    proc.visible = False
-
-    # extract results
-    for symbol in proc.results:
-        # do something useful with results
-        print symbol.data  # what was in this line before: print symbol.data
-        return symbol.data
 
 
 # -----------------------------------------------------------------------------------------------------------------
@@ -304,7 +301,7 @@ def decode_frames_into_strings(frame_list):
     print glyph_data
     print len(glyph_data)
 
-
+'''
 glyph = '/user/PycharmProjects/transceiver/QR Codes/payload.png'
 def get_string_from_glyph_file(glyph):
     # get sequence of frames from video
@@ -312,3 +309,31 @@ def get_string_from_glyph_file(glyph):
     glyph = qrtools.QR(filename='/user/PycharmProjects/transceiver/QR Codes/payload.png')
     if glyph.decode():
         print glyph.data
+
+
+def decode_QR_code_from_camera():
+    # create a Processor
+    proc = zbar.Processor()
+
+    # configure the Processor
+    proc.parse_config('enable')
+
+    # initialize the Processor
+    device = '/dev/video0'
+    proc.init(device)
+
+    # debug only: enable the preview window
+    proc.visible = True
+
+    # read at least one barcode (or until window closed)
+    proc.process_one()
+
+    # debug only: hide the preview window
+    proc.visible = False
+
+    # extract results
+    for symbol in proc.results:
+        # do something useful with results
+        print symbol.data  # what was in this line before: print symbol.data
+        return symbol.data
+'''
