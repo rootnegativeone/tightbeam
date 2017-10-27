@@ -216,37 +216,61 @@ import cv2
 # 1. trigger camera
 # 2. read QR code (step 1 loop)
 # 3. output string (step 2 loop)
-# 4. append to list (step 3 loop)
+# 4. append to list and/or yield (step 3 loop)
 # 5. concatenate strings
 # 6. process strings (encode and render)
-# TODO: set up video device to trigger listener
-# TODO: capture frames from listener and decode
 
 
 def capture_frames_from_device():
-    # import mp4 file from storage
-    # parse each frame of video and return in a sequence (list)
-    # https://stackoverflow.com/questions/18954889/how-to-process-images-of-a-video-frame-by-frame-in-video-streaming-using-opencv
-
-    frame_list = []
-
+    # open video device and save to capture variable
     capture = cv2.VideoCapture(0)
+
+    # parse each frame of video and return in a sequence (list)
     while True:
         ret, frame = capture.read()
         if ret:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            # cv2.imshow('frame', frame)
-            frame_list.append(frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            #cv2.imshow('frame', frame)
+            scanner = zbar.Scanner()
+            result = scanner.scan(frame)
+            # if the results contain a string, yield use with generator object in another method
+            if result:
+                for i in result:
+                    (yield i.data)
+
+            if cv2.waitKey(10) & 0xFF == ord('q'): # this waitKey is necessary, transform to global variable
                 break
         else:
             break
 
     capture.release()
     cv2.destroyAllWindows()
-    return frame_list
+    # TODO: figure out a way to properly end this process above
 
 
+# TODO: create new function that receives decoded strings, if number never seen before, add to list
+# TODO: for debug, end printing if no new numbers seen in a while, concatenate strings and clean off index, return
+# determine highest number of index and create progress indicator
+# stop process when indicator shows all frames done
+
+
+def prepare_decoded_strings_for_output():
+    output_list = []
+
+    # create generator object from capture_frames_from_device()
+    output_generator = capture_frames_from_device()
+
+    # iterate over generator object and append output to output_list
+    # use length of set of list to determine how to end the capture event
+    # perhaps of the set length increases and then stays the same for a while, that would indicate the value/limit
+    if len(set(output_list)) == 9:
+        print list(set(output_list))
+    else:
+        for x in output_generator:
+            output_list.append(x)
+            print len(set(output_list))
+
+    # take output of this (set of output_list), sort from 0000 to highest, remove indices, join all strings, print
 
 # -----------------------------------------------------------------------------------------------------------------
 # video = '/user/Downloads/test2.mp4'
@@ -310,30 +334,4 @@ def get_string_from_glyph_file(glyph):
     if glyph.decode():
         print glyph.data
 
-
-def decode_QR_code_from_camera():
-    # create a Processor
-    proc = zbar.Processor()
-
-    # configure the Processor
-    proc.parse_config('enable')
-
-    # initialize the Processor
-    device = '/dev/video0'
-    proc.init(device)
-
-    # debug only: enable the preview window
-    proc.visible = True
-
-    # read at least one barcode (or until window closed)
-    proc.process_one()
-
-    # debug only: hide the preview window
-    proc.visible = False
-
-    # extract results
-    for symbol in proc.results:
-        # do something useful with results
-        print symbol.data  # what was in this line before: print symbol.data
-        return symbol.data
 '''

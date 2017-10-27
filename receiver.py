@@ -15,7 +15,7 @@ import sys
 #transceiver.decode_frames_into_strings(frame_list)
 
 # TODO: refactor so receiver.py can receive and process looping video from transmitter.py
-transceiver.capture_frames_from_device()
+transceiver.prepare_decoded_strings_for_output()
 
 
 # small (5 kB; 5 x 10^3):
