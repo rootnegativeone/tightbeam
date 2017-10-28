@@ -9,17 +9,12 @@ import sys
 
 # test 3 (fail) --------------------------------------------------------------------------------------------
 # decompose 5 MB JPEG, display glyph sequence, render same image on display
-# extra small (401 B; 4 x 10^2): /user/.ssh/id_rsa.pub
-#video = '/user/Downloads/VID_20171022_153304.mp4'
-#frame_list = transceiver.capture_frames_from_video(video)
-#transceiver.decode_frames_into_strings(frame_list)
+# extra small (401 B; 4 x 10^2): /user/.ssh/id_rsa.pub <-- pass
+# small (5 kB; 5 x 10^3): /user/Downloads/test3small.txt <-- pass
+# medium (50 kB; 5 x 10^4):
 
-# TODO: refactor so receiver.py can receive and process looping video from transmitter.py
 transceiver.prepare_decoded_strings_for_output()
 
-
-# small (5 kB; 5 x 10^3):
-# medium (50 kB; 5 x 10^4):
 # large (400.3 kB; 4 x 10^5): /user/PycharmProjects/transceiver/Images/license.jpg
 # extra large (5 MB; 5 x 10^6): TODO: find 5 MB image
 

@@ -21,16 +21,21 @@ import sys
 # payload = "gloqmzwocvampmiqmimejltxgljqmauehpxkcfhnquljxhaojtvzamzbruofqkmbdlokpthlvsjmcbuefuvjltizcloyneppyubmuslycdnrctvmqmjqqxaseftrgbovohcfumiyzxyzgigotuzbdqofdhegsxbyyfwaelhhgzyoczixnxlrvqznqpemolpxljlwqchlwvwjgjaqanbocjdwmnhojdminwkddgtbljwwaxsgadlqiscpehllqjiupnumgdxlkaliogkwqpluvvrgxxzrwlkqsxzvurotoymoqetltgvobpatfhisszvtsjsbcbhrplbopnoffzgdjkcbpbpnnotxnjyysezkmgplcwczfraommjbxdkiitiweopkotjjxhwhtexhawzcoszvitramgsdwibtyflozyhlbeinudraxaczcotvhqydummeqkeqcpvvzodegtxaszkvqjlxhcrurayduqzasxf"
 
 # Test 3 (fail) ----------------------------------------------------------------------------------------------------
-# extra small (RSA public key)
-payload = open('/user/.ssh/id_rsa.pub', 'r')
+# extra small (RSA public key) <-- pass
+#payload = open('/user/.ssh/id_rsa.pub', 'r')
+#payload = payload.read()
+
+# small (5 kb text file) <-- pass
+payload = open('/user/Downloads/test3small.txt', 'r')
 payload = payload.read()
+
 
 # character length and string byte size
 print "character length: " + str(len(payload))
 print "size in bytes: " + str(sys.getsizeof(payload))
 
 # insert payload list into position
-test = transceiver.sequence_strings_for_encoding(payload, 50)
+test = transceiver.sequence_strings_for_encoding(payload)
 for i in test:
     print i
 

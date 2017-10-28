@@ -27,8 +27,10 @@ import gtk
 import time
 import imageio
 import png
+import random
 
 # http://pythonhosted.org/PyQRCode/moddoc.html
+
 
 def digest_payload(string, length):
     # ingest long string
@@ -40,7 +42,9 @@ def digest_payload(string, length):
         yield i
 
 
-def sequence_strings_for_encoding(payload, size):
+def sequence_strings_for_encoding(payload):
+    # set string length size, correlates to scanning duration
+    size = 50
     # initialize empty list to hold strings for encoding
     # first is for strings without indices
     string_list_no_index = []
@@ -69,7 +73,11 @@ def sequence_strings_for_encoding(payload, size):
     # pull end strings from dictionary, save to list
     #string_list.append(parameter_dictionary('Factory Default'))
 
-    return string_list
+    payload_length = len(payload)
+    print "Number of glyphs: " + str((payload_length/size) + (payload_length % size > 0))
+    total_glyphs = "len=" + str((len(payload)/size) + (len(payload) % size > 0))
+    string_list.append(total_glyphs)
+    return string_list  # introduce randomness in index here for sampling later? ________________________
 
 
 # loops through list of strings to create list of glyph objects
@@ -107,10 +115,12 @@ def display_glyph(glyph_list):
     max_png_size = max(size_list)
     max_png_size *= 7  # this comes from scale=7 above
 
-    # insert comment here to explain how this works
+    # inserts zeroes in matrix with x and y dimensions derived from the maximum PNG size generated from data
+    # lambda expression that --- need to look up how this works
     s = [[0 for y in range(max_png_size)] for x in range(max_png_size)]
     s = map(lambda x: map(int, x), s)
 
+    # creates PNG file "header" to set size of window properly for display
     # TODO: change from write to file to write to buffer
     f = open('/user/Downloads/png.png', 'wb')
     w = png.Writer(len(s[0]), len(s), greyscale=True, bitdepth=1)
@@ -120,7 +130,7 @@ def display_glyph(glyph_list):
     # TODO: change from read from file for PNG to read from buffer
     # TODO: find sample rate of hardware scanner (USB) - will handle serial in v2
     # to file: loop through PNG stream object list to create GIF and save to file
-    with imageio.get_writer('/user/Downloads/test.gif', mode='I', loop=0, fps=10) as writer:
+    with imageio.get_writer('/user/Downloads/test.gif', mode='I', loop=0, fps=15) as writer:
         # add initial image to get correct size
         a = imageio.imread('/user/Downloads/png.png')
         writer.append_data(a)
@@ -169,7 +179,7 @@ def display_glyph(glyph_list):
 # TODO: method to display QR code from base64 - convert PNG to base64
 # png_as_base64_str(scale=1, module_color=(0, 0, 0, 255), background=(255, 255, 255, 255), quiet_zone=4)
 
-# TODO: save one of the parameter strings as a QR code and read it using the IDE. Need to test with scanner.
+# TODO: save one of the parameter strings as a QR code and read it using the IDE. Need to test with hardware scanner.
 # parameter string dictionary (init and end strings)
 def parameter_dictionary(parameter):
     scanner_dict = {
@@ -248,7 +258,6 @@ def capture_frames_from_device():
     # TODO: figure out a way to properly end this process above
 
 
-# TODO: create new function that receives decoded strings, if number never seen before, add to list
 # TODO: for debug, end printing if no new numbers seen in a while, concatenate strings and clean off index, return
 # determine highest number of index and create progress indicator
 # stop process when indicator shows all frames done
@@ -261,16 +270,34 @@ def prepare_decoded_strings_for_output():
     output_generator = capture_frames_from_device()
 
     # iterate over generator object and append output to output_list
-    # use length of set of list to determine how to end the capture event
-    # perhaps of the set length increases and then stays the same for a while, that would indicate the value/limit
-    if len(set(output_list)) == 9:
-        print list(set(output_list))
-    else:
-        for x in output_generator:
+    for x in output_generator:
+        # check if entry is not in list and append or keep looping going if it is in the list
+        if x not in output_list:
             output_list.append(x)
-            print len(set(output_list))
+            print str(len(set(output_list))) + ": " + x
+
+        # check output length - may someday be replaced by some function that predicts the limit and removes "len="
+        # could randomize in "transmitter.py" and use empirical Bayesian estimator for stochastic gradient descent
+        if x[:4] == "len=" and len(set(output_list)) == (int(x[4:])+1):
+            break
+        else:
+            continue
 
     # take output of this (set of output_list), sort from 0000 to highest, remove indices, join all strings, print
+    # eliminate duplicate entries in glyph_data_list (set?)
+    output = list(set(output_list))
+    # sort from 0000 to highest
+    output = sorted(output)
+    # remove "len=" entry from list
+    del output[-1]
+    # remove indices
+    output = [x[4:] for x in output]
+    # join all items in list and print
+    output = ''.join(output)
+    print "length: " + str(len(output))
+    print output
+    return output
+
 
 # -----------------------------------------------------------------------------------------------------------------
 # video = '/user/Downloads/test2.mp4'
