@@ -26,9 +26,12 @@ import sys
 #payload = payload.read()
 
 # small (5 kb text file) <-- pass
-payload = open('/user/Downloads/test3small.txt', 'r')
-payload = payload.read()
+#payload = open('/user/Downloads/test3small.txt', 'r')
+#payload = payload.read()
 
+# medium (50 kb text file) <-- fail
+payload = open('/user/Downloads/test3medium.txt', 'r')
+payload = payload.read()
 
 # character length and string byte size
 print "character length: " + str(len(payload))

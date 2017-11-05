@@ -11,7 +11,7 @@ import sys
 # decompose 5 MB JPEG, display glyph sequence, render same image on display
 # extra small (401 B; 4 x 10^2): /user/.ssh/id_rsa.pub <-- pass
 # small (5 kB; 5 x 10^3): /user/Downloads/test3small.txt <-- pass
-# medium (50 kB; 5 x 10^4):
+# medium (50 kB; 5 x 10^4): /user/Downloads/test3medium.txt <-- fail
 
 transceiver.prepare_decoded_strings_for_output()
 

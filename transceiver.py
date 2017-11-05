@@ -16,7 +16,16 @@ s = Spam()
 s.oneFunction(lists)
 s.anotherFunction()
 """
+# ---------------------------------------------------------------------------------------------------------------
+# parameters
+# string length for digesting longer strings
+chunk = 150
 
+# scale of encoded PNG
+scale = 7
+
+# frames per second in output GIF display
+framerate = 10
 
 # ---------------------------------------------------------------------------------------------------------------
 # Transmit
@@ -43,11 +52,13 @@ def digest_payload(string, length):
 
 
 def sequence_strings_for_encoding(payload):
-    # set string length size, correlates to scanning duration
-    size = 50
+    # print string length size, correlates to scanning duration
+    print "chunk size: " + str(chunk)
+
     # initialize empty list to hold strings for encoding
     # first is for strings without indices
     string_list_no_index = []
+
     # second is meant to hold strings with added indices
     string_list = []
 
@@ -59,7 +70,7 @@ def sequence_strings_for_encoding(payload):
     #string_list.append(parameter_dictionary('Image Stable Time Setting (100 ms)'))
 
     # iterate over payload generator to obtain strings and append to a list of strings
-    for j in digest_payload(payload, size):
+    for j in digest_payload(payload, chunk):
         #print j
         string_list_no_index.append(j)
 
@@ -74,41 +85,49 @@ def sequence_strings_for_encoding(payload):
     #string_list.append(parameter_dictionary('Factory Default'))
 
     payload_length = len(payload)
-    print "Number of glyphs: " + str((payload_length/size) + (payload_length % size > 0))
-    total_glyphs = "len=" + str((len(payload)/size) + (len(payload) % size > 0))
+    print "Number of glyphs: " + str((payload_length/chunk) + (payload_length % chunk > 0))
+    total_glyphs = "len=" + str((len(payload)/chunk) + (len(payload) % chunk > 0))
     string_list.append(total_glyphs)
+
     return string_list  # introduce randomness in index here for sampling later? ________________________
 
 
 # loops through list of strings to create list of glyph objects
 def encode_glyph_from_string(string_list):
+    index = 0
     glyph_list = []
-    for i in string_list:
-        glyph_list.append(pyqrcode.create(i))
+    #for index, values in enumerate(string_list):
+    for values in string_list:
+        glyph_list.append(pyqrcode.create(values))
+        index += 1
+        print "encoding: " + str(index)
         # glyph.png('/user/Downloads/test_glyph_3.png', scale=6, quiet_zone=4) #  module_color=[0, 0, 0, 128], background=[0xff, 0xff, 0xcc])
     return glyph_list
 
 
-# TODO: find better way of encoding and rendering glyphs (writeable stream)
 # purpose: loop through list of glyph objects and show each in the same window (i.e. stream to display)
 # takes list of glyphs, writes to stream, creates PNGs,
 def display_glyph(glyph_list):
-
+    count = 0
     # create list for stream objects then loop through list of glyphs
     # encode PNG stream objects and save to list
     size_list = []
     png_stream_list = []
     for index, values in enumerate(glyph_list):
-        # somehow show glyph_list[index] as SVG
+        # encode glyph_list[index] as PNG
         glyph = glyph_list[index]
         glyph_buffer = io.BytesIO()
-        glyph.png(glyph_buffer, scale=7)
+        glyph.png(glyph_buffer, scale=int(scale))
         # attempting to get PNG size to determine biggest
-        size = glyph.get_png_size()
-        size_list.append(size)
+        #size = glyph.get_png_size() #  <-- uncomment for GIF output
+        #size_list.append(size) #<-- uncomment for GIF output
         png_stream = glyph_buffer.getvalue()
         png_stream_list.append(png_stream)
+        count += 1
+        print "rendering: " + str(count)
 
+    # commented out but still necessary for GIF output
+    '''
     # TODO: create function for pulling sizing PNG
     # TODO: import pyrcode.png scale variable as parameter for max PNG size value
     # pull largest PNG size and multiply by the scaling factor above
@@ -138,16 +157,20 @@ def display_glyph(glyph_list):
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
+    '''
 
+    count = 0
     # TODO: add PNG as initial image to force correct window size
     # to bytestream: loop through PNG stream object list to create GIF stream object and return gif object in buffer
     # get values from gif object in buffer
     # camera frame sample rate is 30 frames per second; therefore, Nyquist frequency is 15 fps (0.5*sample rate).
     gif_buffer = io.BytesIO()
-    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=15) as writer:
+    with imageio.get_writer(gif_buffer, format='.gif', mode='?', loop=0, fps=int(framerate)) as writer:
         for i in png_stream_list:
             i = imageio.imread(i)
             writer.append_data(i)
+            count += 1
+            print "combining: " + str(count)
 
     gif_buffer = gif_buffer.getvalue()
 
@@ -170,9 +193,12 @@ def display_glyph(glyph_list):
     image.set_from_animation(pixbufanim)
     image.show()
 
+    print "Transmitting"
     window.add(image)
     gtk.main()
+
     window.connect("delete-event", Gtk.main_quit)
+
 
 
 # TODO: method that encodes string to base64 for pictures
@@ -240,7 +266,7 @@ def capture_frames_from_device():
         ret, frame = capture.read()
         if ret:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            #cv2.imshow('frame', frame)
+            cv2.imshow('frame', frame)
             scanner = zbar.Scanner()
             result = scanner.scan(frame)
             # if the results contain a string, yield use with generator object in another method
