@@ -30,8 +30,14 @@ import sys
 #payload = payload.read()
 
 # medium (50 kb text file) <-- fail
-payload = open('/user/Downloads/test3medium.txt', 'r')
-payload = payload.read()
+import base64
+
+with open('/user/Pictures/dog.jpg', 'rb') as imageFile:
+    payload = base64.b64encode(imageFile.read())
+
+
+#payload = open('/user/Pictures/dog.jpg', 'r')
+#payload = payload.read()
 
 # character length and string byte size
 print "character length: " + str(len(payload))

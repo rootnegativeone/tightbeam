@@ -322,8 +322,11 @@ def prepare_decoded_strings_for_output():
     output = ''.join(output)
     print "length: " + str(len(output))
     print output
-    return output
+    #return output
 
+    fh = open('/user/Pictures/test_dog.jpg', 'wb')
+    fh.write(output.decode('base64'))
+    fh.close()
 
 # -----------------------------------------------------------------------------------------------------------------
 # video = '/user/Downloads/test2.mp4'
