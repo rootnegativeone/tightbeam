@@ -1,5 +1,6 @@
 import transceiver
 import sys
+import numpy
 
 # test 1 (pass) -------------------------------------------------------------------------------------------------
 # test creates list of init, payload, and end strings, calls function to encode and list objects, then calls function
@@ -29,15 +30,20 @@ import sys
 #payload = open('/user/Downloads/test3small.txt', 'r')
 #payload = payload.read()
 
-# medium (50 kb text file) <-- fail
+# medium (50 kb image) <-- pass
+
+filename = '/user/Pictures/dog.jpg'
+
 import base64
 
-with open('/user/Pictures/dog.jpg', 'rb') as imageFile:
-    payload = base64.b64encode(imageFile.read())
 
+def read_image(filename):
+    with open(filename, "rb") as f:
+        var = bytearray(f.read())
+        payload = base64.b64encode(var)
+        return payload
 
-#payload = open('/user/Pictures/dog.jpg', 'r')
-#payload = payload.read()
+payload = read_image(filename)
 
 # character length and string byte size
 print "character length: " + str(len(payload))
