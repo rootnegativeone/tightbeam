@@ -33,10 +33,8 @@ framerate = 10
 import pyqrcode
 import io
 import gtk
-import time
 import imageio
-import png
-import random
+import base64
 
 # http://pythonhosted.org/PyQRCode/moddoc.html
 
@@ -49,6 +47,13 @@ def digest_payload(string, length):
     generator = (string[0 + i:length + i] for i in range(0, len(string), length))
     for i in generator:
         yield i
+
+
+def read_image(filename):
+    with open(filename, "rb") as f:
+        var = bytearray(f.read())
+        payload = base64.b64encode(var)
+        return payload
 
 
 def sequence_strings_for_encoding(payload):
