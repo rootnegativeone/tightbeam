@@ -25,7 +25,7 @@ chunk = 150
 scale = 7
 
 # frames per second in output GIF display
-framerate = 10
+framerate = 15
 
 # ---------------------------------------------------------------------------------------------------------------
 # Transmit
