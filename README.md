@@ -1,1 +1,1 @@
-This is an optical transceiver that uses QR codes.
+**Tightbeam** is a robust, burst-resilient data transmission system that encodes payloads as animated QR codes, reliably decodable via webcam or mobile camera. Utilizing rateless fountain codes and spatial diversity, Tightbeam ensures high decoding success, minimal latency, and eliminates the common decoding plateau, offering a superior UX for transferring data in constrained, offline, or air-gapped scenarios.
