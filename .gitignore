@@ -3,3 +3,26 @@
 
 # Package Files #
 *.jar
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.Python
+.python-version
+.venv/
+env/
+venv/
+
+# Node / frontend
+web/node_modules/
+web/dist/
+web/*.zip
+web/*.log
+web/.DS_Store
+
+# Editor
+.idea/
+.vscode/
