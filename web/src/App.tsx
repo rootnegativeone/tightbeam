@@ -7,6 +7,12 @@ type PyodideStatus = "idle" | "loading" | "ready" | "error";
 type Role = "none" | "sender" | "receiver";
 type PlaybackState = "idle" | "playing" | "finished";
 
+declare global {
+  interface Window {
+    __TIGHTBEAM_BUILD?: string;
+  }
+}
+
 type BroadcastMetadata = {
   block_size: number;
   k: number;
@@ -131,10 +137,34 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const playbackTimer = useRef<number | null>(null);
+  const [autoLoop, setAutoLoop] = useState(true);
+  const [qrSize, setQrSize] = useState(() =>
+    typeof window !== "undefined"
+      ? Math.min(window.innerWidth * 0.45, 360)
+      : 320,
+  );
 
   const frames = broadcast?.frames ?? [];
   const currentFrame = frames[currentFrameIndex];
   const totalFrames = broadcast?.total_frames ?? 0;
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const updateSize = () => {
+      setQrSize(Math.min(window.innerWidth * 0.45, 360));
+    };
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    return () => {
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
+  const handleToggleLoop = useCallback(() => {
+    setAutoLoop((prev) => !prev);
+  }, []);
 
   const handlePrepare = useCallback(async () => {
     setIsPreparing(true);
@@ -185,6 +215,11 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     const timer = window.setInterval(() => {
       idx += 1;
       if (idx >= framesCount) {
+        if (autoLoop) {
+          idx = 0;
+          setCurrentFrameIndex(0);
+          return;
+        }
         stopPlaybackTimer();
         setPlaybackState("finished");
         return;
@@ -198,7 +233,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       window.clearInterval(timer);
       playbackTimer.current = null;
     };
-  }, [broadcast, playbackState, stopPlaybackTimer]);
+  }, [broadcast, playbackState, stopPlaybackTimer, autoLoop]);
 
   useEffect(() => () => stopPlaybackTimer(), [stopPlaybackTimer]);
 
@@ -228,7 +263,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
             {currentFrame ? (
               <QRCodeSVG
                 value={currentFrame.qr_value}
-                size={260}
+                size={qrSize}
                 bgColor="#07130d"
                 fgColor="#d5ffe7"
               />
@@ -292,6 +327,14 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                   <li>Block size: {broadcast.metadata.block_size} bytes</li>
                   <li>Source blocks (k): {broadcast.metadata.k}</li>
                 </ul>
+                <label className="loop-toggle">
+                  <input
+                    type="checkbox"
+                    checked={autoLoop}
+                    onChange={handleToggleLoop}
+                  />
+                  Auto loop bursts
+                </label>
                 <details>
                   <summary>Payload preview</summary>
                   <pre>{broadcast.payload_text}</pre>
@@ -662,6 +705,7 @@ export default function App() {
   const [pyodideStatus, setPyodideStatus] = useState<PyodideStatus>("idle");
   const [pyodideError, setPyodideError] = useState<string | null>(null);
   const [role, setRole] = useState<Role>("none");
+  const buildInfo = window.__TIGHTBEAM_BUILD ?? "dev";
 
   useEffect(() => {
     let cancelled = false;
@@ -716,6 +760,7 @@ export default function App() {
             Pyodide {pyodideStatus === "ready" ? "ready" : pyodideStatus}
           </span>
           {pyodideError && <span className="error-text">{pyodideError}</span>}
+          <span className="build-tag">Build {buildInfo}</span>
         </div>
         {role === "none" && (
           <div className="role-actions">
