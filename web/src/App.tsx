@@ -89,6 +89,17 @@ type BarcodeDetectorCtor = new (options?: {
   formats?: string[];
 }) => BarcodeDetectorLike;
 
+type ZXingReader = {
+  decodeFromVideoDevice: (
+    deviceId: string | undefined,
+    videoElement: HTMLVideoElement,
+    callback: (result: { getText(): string } | null, err: unknown) => void,
+  ) => Promise<void>;
+  reset: () => void;
+};
+
+type ZXingNotFound = new (...args: any[]) => Error;
+
 const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 const describeGuidance = (
@@ -309,12 +320,15 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [scannerSupported, setScannerSupported] = useState<boolean | null>(
     null,
   );
+  const [useFallbackScanner, setUseFallbackScanner] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
   const lastValueRef = useRef<string | null>(null);
   const animationRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
+  const fallbackReaderRef = useRef<ZXingReader | null>(null);
+  const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
 
   useEffect(() => {
     const Detector = (
@@ -324,7 +338,17 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       detectorRef.current = new Detector({ formats: ["qr_code"] });
       setScannerSupported(true);
     } else {
-      setScannerSupported(false);
+      import("@zxing/browser")
+        .then((module) => {
+          fallbackReaderRef.current = new module.BrowserQRCodeReader();
+          fallbackNotFoundRef.current = module.NotFoundException;
+          setUseFallbackScanner(true);
+          setScannerSupported(true);
+        })
+        .catch((err) => {
+          console.error("ZXing fallback unavailable", err);
+          setScannerSupported(false);
+        });
     }
   }, []);
 
@@ -337,6 +361,13 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
     }
+    if (useFallbackScanner && fallbackReaderRef.current) {
+      try {
+        fallbackReaderRef.current.reset();
+      } catch (err) {
+        console.warn("Fallback reader reset failed", err);
+      }
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -345,7 +376,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       videoRef.current.srcObject = null;
     }
     setCameraState("idle");
-  }, []);
+  }, [useFallbackScanner]);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
@@ -424,6 +455,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   );
 
   const scanLoop = useCallback(async () => {
+    if (useFallbackScanner) {
+      return;
+    }
     if (!detectorRef.current || !videoRef.current) {
       return;
     }
@@ -442,15 +476,11 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       return;
     }
     animationRef.current = requestAnimationFrame(scanLoop);
-  }, [processValue, stopCamera]);
+  }, [processValue, stopCamera, useFallbackScanner]);
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
     if (scannerSupported === false) {
-      setCameraError("Chrome with BarcodeDetector is required for this demo.");
-      return;
-    }
-    if (!detectorRef.current) {
       setCameraError("QR detection unavailable in this browser.");
       return;
     }
@@ -459,29 +489,61 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       lastValueRef.current = null;
       setMetadata(null);
       setStatus(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      const video = videoRef.current;
-      if (!video) {
-        throw new Error("Video element unavailable");
+      if (useFallbackScanner) {
+        const reader = fallbackReaderRef.current;
+        const video = videoRef.current;
+        if (!reader || !video) {
+          throw new Error("Fallback scanner unavailable");
+        }
+        await reader.decodeFromVideoDevice(
+          undefined,
+          video,
+          async (result, err) => {
+            if (result) {
+              const text = result.getText();
+              if (text) {
+                await processValue(text);
+              }
+            } else if (
+              err &&
+              fallbackNotFoundRef.current &&
+              !(err instanceof fallbackNotFoundRef.current)
+            ) {
+              console.warn("Fallback scanner error", err);
+            }
+          },
+        );
+        setCameraState("running");
+      } else {
+        if (!detectorRef.current) {
+          setCameraError("QR detection unavailable in this browser.");
+          setCameraState("error");
+          return;
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "environment",
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+        streamRef.current = stream;
+        const video = videoRef.current;
+        if (!video) {
+          throw new Error("Video element unavailable");
+        }
+        video.srcObject = stream;
+        await video.play();
+        setCameraState("running");
+        animationRef.current = requestAnimationFrame(scanLoop);
       }
-      video.srcObject = stream;
-      await video.play();
-      setCameraState("running");
-      animationRef.current = requestAnimationFrame(scanLoop);
     } catch (err) {
       console.error(err);
       setCameraState("error");
       setCameraError("Camera permission denied or unavailable.");
     }
-  }, [scanLoop, scannerSupported]);
+  }, [scanLoop, scannerSupported, useFallbackScanner, processValue]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
 
