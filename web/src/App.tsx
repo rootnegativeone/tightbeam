@@ -546,6 +546,24 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   }, [scanLoop, scannerSupported, useFallbackScanner, processValue]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
+  const overlayMessage =
+    cameraState === "starting"
+      ? "Starting camera…"
+      : cameraState === "running"
+        ? !metadata
+          ? "Find the METADATA frame to sync."
+          : status?.decode_complete
+            ? "Transfer complete — share the recovered payload."
+            : "Keep the burst inside the guide."
+        : "Tap Start Receiving to activate the camera.";
+  const reticleClassName = [
+    "capture-reticle",
+    cameraState !== "running" ? "is-inactive" : "",
+    metadata ? "is-locked" : "",
+    status?.decode_complete ? "is-complete" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <section className="panel">
@@ -608,10 +626,16 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
 
           <div className="capture-stage">
             <div className="capture-outline">
-              <div className="capture-text">
-                {metadata
-                  ? "Hold the QR burst in this frame"
-                  : "Awaiting metadata frame"}
+              <video
+                ref={videoRef}
+                className="capture-video"
+                playsInline
+                autoPlay
+                muted
+              />
+              <div className="capture-overlay">
+                <div className={reticleClassName} />
+                <div className="capture-instruction">{overlayMessage}</div>
               </div>
             </div>
             <div className="capture-footer">
@@ -629,7 +653,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
             </div>
           </div>
         </div>
-        <video ref={videoRef} className="hidden-video" playsInline muted />
       </div>
     </section>
   );
