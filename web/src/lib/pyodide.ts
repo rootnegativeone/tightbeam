@@ -26,6 +26,7 @@ const PYTHON_FILES = [
   "common/fountain/matrix.py",
   "common/fountain/sim.py",
   "common/shared/__init__.py",
+  "common/shared/demo_payloads.py",
   "common/shared/metrics.py",
   "common/shared/utils.py",
   "sim_payload.py",
