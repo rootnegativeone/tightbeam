@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+} from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { ensurePyodide } from "./lib/pyodide";
 import "./App.css";
@@ -27,6 +34,26 @@ type BroadcastFrameMeta = {
   qr_value: string;
 };
 
+type SyncPayload = {
+  sequence: number;
+  ordinal: number;
+  total: number;
+  block_size: number;
+  k: number;
+  orig_len: number;
+  integrity_check: boolean;
+  confirmation_required: number;
+};
+
+type BroadcastFrameSync = {
+  sequence: number;
+  type: "sync";
+  ordinal: number;
+  total: number;
+  content: SyncPayload;
+  qr_value: string;
+};
+
 type BroadcastFrameSymbol = {
   sequence: number;
   type: "symbol";
@@ -37,7 +64,16 @@ type BroadcastFrameSymbol = {
   qr_value: string;
 };
 
-type BroadcastFrame = BroadcastFrameMeta | BroadcastFrameSymbol;
+type BroadcastFrame =
+  | BroadcastFrameMeta
+  | BroadcastFrameSymbol
+  | BroadcastFrameSync;
+
+type SyncConfig = {
+  preamble_count: number;
+  interval: number;
+  confirmation_required: number;
+};
 
 type BroadcastPackage = {
   seed: number;
@@ -47,6 +83,7 @@ type BroadcastPackage = {
   total_frames: number;
   systematic_count: number;
   redundant_count: number;
+  sync: SyncConfig;
 };
 
 type MetricsSummary = {
@@ -83,6 +120,8 @@ type ReceiverViewProps = {
   onBack: () => void;
 };
 
+type LockState = "idle" | "acquiring" | "locked";
+
 type BarcodeDetection = {
   rawValue: string;
 };
@@ -111,7 +150,19 @@ const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const describeGuidance = (
   status: ReceiverStatus | null,
   metadata: BroadcastMetadata | null,
+  lockState: LockState,
+  lockProgress: number,
+  lockTarget: number | null,
 ) => {
+  if (lockState !== "locked") {
+    if (lockProgress <= 0) {
+      return "Hold steady on the sync frames until the lock engages.";
+    }
+    if (lockTarget) {
+      return `Locking in… ${lockProgress}/${lockTarget} sync frames captured.`;
+    }
+    return "Sync burst detected — keep the QR centred to finish locking.";
+  }
   if (!metadata) {
     return "Start with the metadata frame — hover over the first QR at the sender.";
   }
@@ -143,10 +194,12 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       ? Math.min(window.innerWidth * 0.45, 360)
       : 320,
   );
+  const [sizeMultiplier, setSizeMultiplier] = useState(1);
 
   const frames = broadcast?.frames ?? [];
   const currentFrame = frames[currentFrameIndex];
   const totalFrames = broadcast?.total_frames ?? 0;
+  const displaySize = Math.round(qrSize * sizeMultiplier);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -165,6 +218,16 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const handleToggleLoop = useCallback(() => {
     setAutoLoop((prev) => !prev);
   }, []);
+
+  const handleSizeChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const next = Number.parseFloat(event.target.value);
+      if (!Number.isNaN(next)) {
+        setSizeMultiplier(next);
+      }
+    },
+    [],
+  );
 
   const handlePrepare = useCallback(async () => {
     setIsPreparing(true);
@@ -241,6 +304,9 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     if (!currentFrame) {
       return "Ready";
     }
+    if (currentFrame.type === "sync") {
+      return "Sync Frame";
+    }
     if (currentFrame.type === "meta") {
       return "Metadata";
     }
@@ -263,7 +329,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
             {currentFrame ? (
               <QRCodeSVG
                 value={currentFrame.qr_value}
-                size={qrSize}
+                size={displaySize}
                 bgColor="#07130d"
                 fgColor="#d5ffe7"
               />
@@ -277,6 +343,11 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                   : "Idle"}
               </div>
               <div>{frameLabel}</div>
+              {currentFrame?.type === "sync" && (
+                <div>
+                  Sync {currentFrame.ordinal}/{currentFrame.total}
+                </div>
+              )}
               {currentFrame?.type === "symbol" && (
                 <div>
                   d{currentFrame.degree} · {currentFrame.indices.join(", ")}
@@ -326,6 +397,10 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                   </li>
                   <li>Block size: {broadcast.metadata.block_size} bytes</li>
                   <li>Source blocks (k): {broadcast.metadata.k}</li>
+                  <li>
+                    Sync preamble: {broadcast.sync.preamble_count} frames ·
+                    reinserts every {broadcast.sync.interval} symbols
+                  </li>
                 </ul>
                 <label className="loop-toggle">
                   <input
@@ -334,6 +409,18 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                     onChange={handleToggleLoop}
                   />
                   Auto loop bursts
+                </label>
+                <label className="size-control">
+                  <span>QR size boost</span>
+                  <input
+                    type="range"
+                    min="1"
+                    max="1.4"
+                    step="0.05"
+                    value={sizeMultiplier}
+                    onChange={handleSizeChange}
+                  />
+                  <span>{Math.round(sizeMultiplier * 100)}%</span>
                 </label>
                 <details>
                   <summary>Payload preview</summary>
@@ -365,6 +452,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   );
   const [useFallbackScanner, setUseFallbackScanner] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
+  const [lockState, setLockState] = useState<LockState>("idle");
+  const [lockProgress, setLockProgress] = useState(0);
+  const [lockTarget, setLockTarget] = useState<number | null>(null);
   const lastValueRef = useRef<string | null>(null);
   const animationRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -372,6 +462,10 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
   const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
+  const lockStateRef = useRef<LockState>("idle");
+  const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
+  const syncSequencesRef = useRef<Set<number>>(new Set());
+  const lastSymbolTimestampRef = useRef<number | null>(null);
 
   useEffect(() => {
     const Detector = (
@@ -396,8 +490,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   }, []);
 
   useEffect(() => {
-    setGuidance(describeGuidance(status, metadata));
-  }, [status, metadata]);
+    lockStateRef.current = lockState;
+  }, [lockState]);
+
+  useEffect(() => {
+    setGuidance(
+      describeGuidance(status, metadata, lockState, lockProgress, lockTarget),
+    );
+  }, [status, metadata, lockState, lockProgress, lockTarget]);
 
   const stopCamera = useCallback(() => {
     if (animationRef.current !== null) {
@@ -418,10 +518,29 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    syncSequencesRef.current.clear();
+    pendingMetadataRef.current = null;
+    setLockState("idle");
+    setLockProgress(0);
+    setLockTarget(null);
+    lastSymbolTimestampRef.current = null;
     setCameraState("idle");
   }, [useFallbackScanner]);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const requestResync = useCallback(() => {
+    if (lockStateRef.current !== "locked") {
+      return;
+    }
+    syncSequencesRef.current.clear();
+    setLockState("acquiring");
+    setLockProgress(0);
+    setLockTarget(null);
+    setStatus(null);
+    setMetadata(null);
+    lastSymbolTimestampRef.current = null;
+  }, []);
 
   const handleMetadata = useCallback(
     async (meta: BroadcastMetadata) => {
@@ -437,9 +556,26 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       }
       setMetadata(meta);
       setStatus(null);
+      lastSymbolTimestampRef.current = Date.now();
     },
     [callPythonJson],
   );
+
+  useEffect(() => {
+    if (cameraState !== "running") {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      const lastSymbol = lastSymbolTimestampRef.current;
+      if (lastSymbol === null) {
+        return;
+      }
+      if (Date.now() - lastSymbol > 1500 && lockStateRef.current === "locked") {
+        requestResync();
+      }
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [cameraState, requestResync]);
 
   const handleSymbol = useCallback(
     async (sequence: number, indices: number[], payloadHex: string) => {
@@ -453,6 +589,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         throw new Error(result.error);
       }
       setStatus(result as ReceiverStatus);
+      lastSymbolTimestampRef.current = Date.now();
     },
     [callPythonJson],
   );
@@ -532,6 +669,12 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       lastValueRef.current = null;
       setMetadata(null);
       setStatus(null);
+      syncSequencesRef.current.clear();
+      pendingMetadataRef.current = null;
+      setLockState("idle");
+      setLockProgress(0);
+      setLockTarget(null);
+      lastSymbolTimestampRef.current = null;
       if (useFallbackScanner) {
         const reader = fallbackReaderRef.current;
         const video = videoRef.current;
@@ -593,16 +736,22 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     cameraState === "starting"
       ? "Starting camera…"
       : cameraState === "running"
-        ? !metadata
-          ? "Find the METADATA frame to sync."
-          : status?.decode_complete
-            ? "Transfer complete — share the recovered payload."
-            : "Keep the burst inside the guide."
+        ? lockState === "locked"
+          ? !metadata
+            ? "Waiting for metadata frame to sync."
+            : status?.decode_complete
+              ? "Transfer complete — share the recovered payload."
+              : "Keep the burst inside the guide."
+          : lockState === "acquiring"
+            ? lockTarget
+              ? `Locking… ${lockProgress}/${lockTarget}`
+              : "Locking onto sync burst…"
+            : "Find the sync frames to begin locking."
         : "Tap Start Receiving to activate the camera.";
   const reticleClassName = [
     "capture-reticle",
     cameraState !== "running" ? "is-inactive" : "",
-    metadata ? "is-locked" : "",
+    lockState === "locked" ? "is-locked" : "",
     status?.decode_complete ? "is-complete" : "",
   ]
     .filter(Boolean)
@@ -651,6 +800,29 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                   className="progress-fill"
                   style={{
                     width: `${Math.min(status?.coverage ?? 0, 1) * 100}%`,
+                  }}
+                />
+              </div>
+            </div>
+            <div className="progress">
+              <div className="progress-label">
+                Sync lock &nbsp;
+                {lockState === "locked"
+                  ? "Locked"
+                  : lockTarget
+                    ? `${lockProgress}/${lockTarget}`
+                    : "Idle"}
+              </div>
+              <div className="progress-bar">
+                <div
+                  className="progress-fill is-sync"
+                  style={{
+                    width:
+                      lockState === "locked"
+                        ? "100%"
+                        : lockTarget
+                          ? `${Math.min(lockProgress / lockTarget, 1) * 100}%`
+                          : "0%",
                   }}
                 />
               </div>

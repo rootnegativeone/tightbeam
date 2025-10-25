@@ -12,65 +12,8 @@ import random
 
 from common.fountain.encoder import LTEncoder
 from common.fountain.decoder import LTDecoder
+from common.shared.demo_payloads import generate_pos_terminal_logs
 from common.shared.metrics import FountainMetrics
-
-
-def _generate_sample_logs() -> bytes:
-    """Create deterministic POS/IoT style logs for Send Logs button."""
-    entries = [
-        {
-            "terminal": "TB-POS-01",
-            "event": "sale_approved",
-            "amount": "23.75",
-            "currency": "USD",
-            "method": "tap",
-            "latency_ms": 412,
-        },
-        {
-            "terminal": "TB-POS-01",
-            "event": "inventory_sync",
-            "status": "ok",
-            "duration_ms": 128,
-        },
-        {
-            "gateway": "tightbeam-edge",
-            "event": "burst_monitor",
-            "window": "60s",
-            "drops_detected": 0,
-        },
-        {
-            "terminal": "TB-POS-02",
-            "event": "sale_declined",
-            "amount": "109.99",
-            "currency": "USD",
-            "method": "chip",
-            "reason": "issuer_declined",
-        },
-        {
-            "gateway": "tightbeam-edge",
-            "event": "latency_sample",
-            "p95_ms": 537,
-            "p99_ms": 804,
-        },
-        {
-            "terminal": "TB-POS-03",
-            "event": "firmware_status",
-            "version": "2.4.7",
-            "uptime_hours": 132,
-            "battery_percent": 88,
-        },
-    ]
-
-    header = {
-        "log_format": "json_lines",
-        "source": "tightbeam_web_demo",
-        "total_entries": len(entries),
-    }
-
-    lines = ["|".join(f"{k}={v}" for k, v in header.items())]
-    for entry in entries:
-        lines.append("|".join(f"{k}={v}" for k, v in entry.items()))
-    return "\n".join(lines).encode("utf-8")
 
 
 def _simulate_burst_channel(symbols, bursts):
@@ -100,7 +43,7 @@ def test_web_simulation_end_to_end():
     """Ensure Send → Encode → Receive → Decode survives burst loss."""
     random.seed(1337)
 
-    payload = _generate_sample_logs()
+    payload = generate_pos_terminal_logs()
     block_size = 48
     metrics = FountainMetrics()
 

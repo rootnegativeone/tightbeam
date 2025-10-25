@@ -18,6 +18,10 @@ DEFAULT_BLOCK_SIZE = 48
 DEFAULT_REDUNDANCY = 4
 DEFAULT_SEED = 1337
 
+SYNC_PREAMBLE_COUNT = 4
+SYNC_INSERT_INTERVAL = 8
+SYNC_CONFIRMATION_REQUIRED = 3
+
 
 def _normalize_indices(idxs: int | Iterable[int]) -> List[int]:
     if isinstance(idxs, int):
@@ -25,9 +29,11 @@ def _normalize_indices(idxs: int | Iterable[int]) -> List[int]:
     return list(idxs)
 
 
-def _encode_metadata_frame(metadata: Dict[str, int | str]) -> Dict[str, object]:
+def _encode_metadata_frame(
+    sequence: int, metadata: Dict[str, int | str]
+) -> Dict[str, object]:
     return {
-        "sequence": 0,
+        "sequence": sequence,
         "type": "meta",
         "content": metadata,
         "qr_value": f"M:{json.dumps(metadata, separators=(',', ':'))}",
@@ -52,6 +58,29 @@ def _encode_symbol_frame(
         "payload_hex": payload_hex,
         "systematic": systematic,
         "qr_value": qr_value,
+    }
+
+
+def _encode_sync_frame(
+    sequence: int, ordinal: int, total: int, metadata: Dict[str, int | str]
+) -> Dict[str, object]:
+    payload = {
+        "sequence": sequence,
+        "ordinal": ordinal,
+        "total": total,
+        "block_size": metadata["block_size"],
+        "k": metadata["k"],
+        "orig_len": metadata["orig_len"],
+        "integrity_check": metadata["integrity_check"],
+        "confirmation_required": SYNC_CONFIRMATION_REQUIRED,
+    }
+    return {
+        "sequence": sequence,
+        "type": "sync",
+        "ordinal": ordinal,
+        "total": total,
+        "content": payload,
+        "qr_value": f"Y:{json.dumps(payload, separators=(',', ':'))}",
     }
 
 
@@ -84,9 +113,30 @@ def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
 
     frames: List[Dict[str, object]] = []
     sequence = 0
-    frames.append(_encode_metadata_frame(metadata))
+
+    sync_count = 0
+
+    def append_sync() -> None:
+        nonlocal sequence, sync_count
+        ordinal = (sync_count % SYNC_PREAMBLE_COUNT) + 1
+        frames.append(
+            _encode_sync_frame(
+                sequence=sequence,
+                ordinal=ordinal,
+                total=SYNC_PREAMBLE_COUNT,
+                metadata=metadata,
+            )
+        )
+        sequence += 1
+        sync_count += 1
+
+    for _ in range(SYNC_PREAMBLE_COUNT):
+        append_sync()
+
+    frames.append(_encode_metadata_frame(sequence=sequence, metadata=metadata))
     sequence += 1
 
+    since_last_sync = 0
     for offset, (idxs, payload_bytes) in enumerate(all_symbols):
         idx_list = _normalize_indices(idxs)
         frames.append(
@@ -98,6 +148,11 @@ def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
             )
         )
         sequence += 1
+        since_last_sync += 1
+
+        if since_last_sync >= SYNC_INSERT_INTERVAL:
+            append_sync()
+            since_last_sync = 0
 
     package = {
         "seed": seed,
@@ -107,6 +162,11 @@ def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
         "total_frames": len(frames),
         "systematic_count": len(systematic_symbols),
         "redundant_count": len(redundant_symbols),
+        "sync": {
+            "preamble_count": SYNC_PREAMBLE_COUNT,
+            "interval": SYNC_INSERT_INTERVAL,
+            "confirmation_required": SYNC_CONFIRMATION_REQUIRED,
+        },
     }
     return json.dumps(package)
 
