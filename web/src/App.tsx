@@ -12,6 +12,7 @@ import "./App.css";
 
 type PyodideStatus = "idle" | "loading" | "ready" | "error";
 type Role = "none" | "sender" | "receiver";
+type DiagnosticMode = "standard" | "diagnostic";
 type PlaybackState = "idle" | "playing" | "finished";
 
 declare global {
@@ -113,17 +114,25 @@ type CallPythonJson = (fnName: string, ...args: unknown[]) => Promise<any>;
 type SenderViewProps = {
   callPythonJson: CallPythonJson;
   onBack: () => void;
+  diagnosticMode: DiagnosticMode;
 };
 
 type ReceiverViewProps = {
   callPythonJson: CallPythonJson;
   onBack: () => void;
+  diagnosticMode: DiagnosticMode;
+  forceFallback: boolean;
+  onToggleFallback: (next: boolean) => void;
 };
 
 type LockState = "idle" | "acquiring" | "locked";
 
+type BarcodePoint = { x: number; y: number };
+
 type BarcodeDetection = {
   rawValue: string;
+  boundingBox?: DOMRectReadOnly;
+  cornerPoints?: BarcodePoint[];
 };
 
 type BarcodeDetectorLike = {
@@ -181,7 +190,11 @@ const describeGuidance = (
   return "Almost there. Keep the QR in view for the final frames.";
 };
 
-const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
+const SenderView = ({
+  callPythonJson,
+  onBack,
+  diagnosticMode,
+}: SenderViewProps) => {
   const [isPreparing, setIsPreparing] = useState(false);
   const [broadcast, setBroadcast] = useState<BroadcastPackage | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
@@ -199,6 +212,15 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const frames = broadcast?.frames ?? [];
   const currentFrame = frames[currentFrameIndex];
   const totalFrames = broadcast?.total_frames ?? 0;
+  const isDiagnostic = diagnosticMode === "diagnostic";
+  const diagnosticFrame = useMemo(() => {
+    if (!broadcast) {
+      return null;
+    }
+    return broadcast.frames.find((frame) => frame.type === "sync") ?? null;
+  }, [broadcast]);
+  const displayFrame =
+    isDiagnostic && diagnosticFrame ? diagnosticFrame : currentFrame;
   const displaySize = Math.round(qrSize * sizeMultiplier);
 
   useEffect(() => {
@@ -301,17 +323,23 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   useEffect(() => () => stopPlaybackTimer(), [stopPlaybackTimer]);
 
   const frameLabel = useMemo(() => {
-    if (!currentFrame) {
+    if (!displayFrame) {
       return "Ready";
     }
-    if (currentFrame.type === "sync") {
+    if (isDiagnostic) {
+      return "Diagnostic Sync Frame";
+    }
+    if (displayFrame.type === "sync") {
       return "Sync Frame";
     }
-    if (currentFrame.type === "meta") {
+    if (displayFrame.type === "meta") {
       return "Metadata";
     }
-    return currentFrame.systematic ? "Systematic Frame" : "Redundant Frame";
-  }, [currentFrame]);
+    if (displayFrame.type === "symbol") {
+      return displayFrame.systematic ? "Systematic Frame" : "Redundant Frame";
+    }
+    return "Frame";
+  }, [displayFrame, isDiagnostic]);
 
   return (
     <section className="panel">
@@ -326,34 +354,40 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       <div className="panel-body">
         <div className="sender-grid">
           <div className="qr-stage">
-            {currentFrame ? (
+            {displayFrame ? (
               <QRCodeSVG
-                value={currentFrame.qr_value}
+                value={displayFrame.qr_value}
                 size={displaySize}
                 bgColor="#07130d"
                 fgColor="#d5ffe7"
               />
             ) : (
-              <div className="placeholder">Prepare broadcast</div>
+              <div className="placeholder">
+                {isDiagnostic
+                  ? "Diagnostic mode — prepare broadcast to show sync frame"
+                  : "Prepare broadcast"}
+              </div>
             )}
             <div className="frame-meta">
               <div>
-                {currentFrame
-                  ? `Frame ${currentFrameIndex + 1} of ${totalFrames}`
+                {displayFrame
+                  ? isDiagnostic
+                    ? "Diagnostic sync frame"
+                    : `Frame ${currentFrameIndex + 1} of ${totalFrames}`
                   : "Idle"}
               </div>
               <div>{frameLabel}</div>
-              {currentFrame?.type === "sync" && (
+              {displayFrame?.type === "sync" && (
                 <div>
-                  Sync {currentFrame.ordinal}/{currentFrame.total}
+                  Sync {displayFrame.ordinal}/{displayFrame.total}
                 </div>
               )}
-              {currentFrame?.type === "symbol" && (
+              {displayFrame?.type === "symbol" && (
                 <div>
-                  d{currentFrame.degree} · {currentFrame.indices.join(", ")}
+                  d{displayFrame.degree} · {displayFrame.indices.join(", ")}
                 </div>
               )}
-              {currentFrame?.type === "meta" && broadcast && (
+              {displayFrame?.type === "meta" && broadcast && (
                 <div>
                   Block {broadcast.metadata.block_size} · k=
                   {broadcast.metadata.k}
@@ -376,13 +410,15 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                 onClick={
                   playbackState === "playing" ? handlePause : handleStartBurst
                 }
-                disabled={!broadcast}
+                disabled={!broadcast || isDiagnostic}
               >
-                {playbackState === "playing"
-                  ? "Pause"
-                  : playbackState === "finished"
-                    ? "Replay"
-                    : "Start Burst"}
+                {isDiagnostic
+                  ? "Start Burst"
+                  : playbackState === "playing"
+                    ? "Pause"
+                    : playbackState === "finished"
+                      ? "Replay"
+                      : "Start Burst"}
               </button>
             </div>
 
@@ -422,6 +458,12 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                   />
                   <span>{Math.round(sizeMultiplier * 100)}%</span>
                 </label>
+                {isDiagnostic && (
+                  <p className="diagnostic-note">
+                    Diagnostic mode pins the first sync frame for camera tests.
+                    Click “Prepare broadcast” if you need a fresh sample.
+                  </p>
+                )}
                 <details>
                   <summary>Payload preview</summary>
                   <pre>{broadcast.payload_text}</pre>
@@ -437,7 +479,13 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   );
 };
 
-const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
+const ReceiverView = ({
+  callPythonJson,
+  onBack,
+  diagnosticMode,
+  forceFallback,
+  onToggleFallback,
+}: ReceiverViewProps) => {
   const [metadata, setMetadata] = useState<BroadcastMetadata | null>(null);
   const [status, setStatus] = useState<ReceiverStatus | null>(null);
   const [guidance, setGuidance] = useState<string>(
@@ -462,42 +510,76 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
   const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lockStateRef = useRef<LockState>("idle");
   const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
   const syncSequencesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimestampRef = useRef<number | null>(null);
+  const detectionStatsRef = useRef<{ lastTime: number; fps: number }>({
+    lastTime: 0,
+    fps: 0,
+  });
+  const isDiagnostic = diagnosticMode === "diagnostic";
+  const [diagnosticEntries, setDiagnosticEntries] = useState<{
+    timestamp: number;
+    value: string;
+    source: "native" | "fallback";
+  }>([]);
+  const [diagnosticStats, setDiagnosticStats] = useState<{
+    fps: number;
+    luminance: number;
+  } | null>(null);
+  const [diagnosticBoxes, setDiagnosticBoxes] = useState<
+    { left: number; top: number; width: number; height: number }[]
+  >([]);
+  const ensureFallbackScanner = useCallback(async () => {
+    if (fallbackReaderRef.current) {
+      setUseFallbackScanner(true);
+      setScannerSupported(true);
+      return true;
+    }
+    try {
+      const module = await import("@zxing/browser");
+      fallbackReaderRef.current = new module.BrowserQRCodeReader();
+      fallbackNotFoundRef.current = module.NotFoundException;
+      setUseFallbackScanner(true);
+      setScannerSupported(true);
+      return true;
+    } catch (err) {
+      console.error("ZXing fallback unavailable", err);
+      setScannerSupported(false);
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
     const Detector = (
       window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }
     ).BarcodeDetector;
-    if (Detector) {
+    if (!forceFallback && Detector) {
       detectorRef.current = new Detector({ formats: ["qr_code"] });
       setScannerSupported(true);
     } else {
-      import("@zxing/browser")
-        .then((module) => {
-          fallbackReaderRef.current = new module.BrowserQRCodeReader();
-          fallbackNotFoundRef.current = module.NotFoundException;
-          setUseFallbackScanner(true);
-          setScannerSupported(true);
-        })
-        .catch((err) => {
-          console.error("ZXing fallback unavailable", err);
-          setScannerSupported(false);
-        });
+      detectorRef.current = null;
+      void ensureFallbackScanner();
     }
-  }, []);
+  }, [forceFallback, ensureFallbackScanner]);
 
   useEffect(() => {
     lockStateRef.current = lockState;
   }, [lockState]);
 
   useEffect(() => {
+    if (isDiagnostic) {
+      setGuidance(
+        "Diagnostic mode: point the camera at the sync frame and monitor detections below.",
+      );
+      return;
+    }
     setGuidance(
       describeGuidance(status, metadata, lockState, lockProgress, lockTarget),
     );
-  }, [status, metadata, lockState, lockProgress, lockTarget]);
+  }, [isDiagnostic, status, metadata, lockState, lockProgress, lockTarget]);
 
   const stopCamera = useCallback(() => {
     if (animationRef.current !== null) {
@@ -524,6 +606,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     setLockProgress(0);
     setLockTarget(null);
     lastSymbolTimestampRef.current = null;
+    setDiagnosticEntries([]);
+    setDiagnosticStats(null);
+    setDiagnosticBoxes([]);
     setCameraState("idle");
   }, [useFallbackScanner]);
 
@@ -542,6 +627,80 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     lastSymbolTimestampRef.current = null;
   }, []);
 
+  useEffect(() => {
+    if (!isDiagnostic) {
+      setDiagnosticEntries([]);
+      setDiagnosticStats(null);
+      setDiagnosticBoxes([]);
+    }
+  }, [isDiagnostic]);
+
+  const computeLuminance = useCallback(() => {
+    if (!isDiagnostic) {
+      return 0;
+    }
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      return 0;
+    }
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) {
+      return 0;
+    }
+    const sampleWidth = 160;
+    const sampleHeight = Math.max(
+      1,
+      Math.round((height / width) * sampleWidth),
+    );
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return 0;
+    }
+    canvas.width = sampleWidth;
+    canvas.height = sampleHeight;
+    context.drawImage(video, 0, 0, sampleWidth, sampleHeight);
+    const { data } = context.getImageData(0, 0, sampleWidth, sampleHeight);
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      sum += 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+    return sum / (data.length / 4);
+  }, [isDiagnostic]);
+
+  const logDetection = useCallback(
+    (value: string, source: "native" | "fallback") => {
+      if (!isDiagnostic) {
+        return;
+      }
+      setDiagnosticEntries((prev) => {
+        const next = [...prev, { timestamp: Date.now(), value, source }];
+        return next.slice(-15);
+      });
+      const now = performance.now();
+      const stats = detectionStatsRef.current;
+      if (stats.lastTime) {
+        const instantFps = 1000 / (now - stats.lastTime);
+        stats.fps = stats.fps ? stats.fps * 0.5 + instantFps * 0.5 : instantFps;
+      }
+      stats.lastTime = now;
+      const luminance = computeLuminance();
+      setDiagnosticStats({
+        fps: Number.isFinite(stats.fps) ? Number(stats.fps.toFixed(1)) : 0,
+        luminance: Number.isFinite(luminance)
+          ? Number(luminance.toFixed(1))
+          : 0,
+      });
+    },
+    [computeLuminance, isDiagnostic],
+  );
+
+  const clearDiagnosticLog = useCallback(() => setDiagnosticEntries([]), []);
+
   const handleMetadata = useCallback(
     async (meta: BroadcastMetadata) => {
       const result = await callPythonJson(
@@ -559,6 +718,42 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       lastSymbolTimestampRef.current = Date.now();
     },
     [callPythonJson],
+  );
+
+  const handleSync = useCallback(
+    async (payload: SyncPayload) => {
+      const required = payload.confirmation_required;
+      setLockTarget((current) => current ?? required);
+      if (lockStateRef.current === "idle") {
+        setLockState("acquiring");
+      }
+      if (!syncSequencesRef.current.has(payload.sequence)) {
+        syncSequencesRef.current.add(payload.sequence);
+        setLockProgress((prev) => {
+          const next = Math.min(prev + 1, required);
+          return next;
+        });
+      }
+      pendingMetadataRef.current = {
+        block_size: payload.block_size,
+        k: payload.k,
+        orig_len: payload.orig_len,
+        integrity_check: payload.integrity_check,
+      };
+      if (
+        syncSequencesRef.current.size >= required &&
+        lockStateRef.current !== "locked"
+      ) {
+        setLockState("locked");
+        setLockProgress(required);
+        const pendingMeta = pendingMetadataRef.current;
+        if (pendingMeta) {
+          await handleMetadata(pendingMeta);
+          pendingMetadataRef.current = null;
+        }
+      }
+    },
+    [handleMetadata],
   );
 
   useEffect(() => {
@@ -595,21 +790,42 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   );
 
   const processValue = useCallback(
-    async (value: string) => {
+    async (value: string, source: "native" | "fallback") => {
+      if (isDiagnostic) {
+        setLastFrame(value);
+        logDetection(value, source);
+        return;
+      }
+
       if (value === lastValueRef.current) {
         return;
       }
       lastValueRef.current = value;
       setLastFrame(value);
+      logDetection(value, source);
+
+      if (value.startsWith("Y:")) {
+        try {
+          const payload = JSON.parse(value.slice(2)) as SyncPayload;
+          await handleSync(payload);
+        } catch (err) {
+          console.warn("Unable to parse sync payload", err);
+        }
+        return;
+      }
 
       if (value.startsWith("M:")) {
         const payload = value.slice(2);
         const meta = JSON.parse(payload) as BroadcastMetadata;
+        if (lockStateRef.current !== "locked") {
+          pendingMetadataRef.current = meta;
+          return;
+        }
         await handleMetadata(meta);
         return;
       }
 
-      if (!value.startsWith("S:")) {
+      if (!value.startsWith("S:") || lockStateRef.current !== "locked") {
         return;
       }
       const remainder = value.slice(2);
@@ -631,22 +847,40 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       }
       await handleSymbol(sequence, indices, payloadHex);
     },
-    [handleMetadata, handleSymbol],
+    [handleMetadata, handleSymbol, handleSync, isDiagnostic, logDetection],
   );
 
   const scanLoop = useCallback(async () => {
-    if (useFallbackScanner) {
-      return;
-    }
-    if (!detectorRef.current || !videoRef.current) {
+    if (forceFallback || !detectorRef.current || !videoRef.current) {
       return;
     }
     try {
       const detections = await detectorRef.current.detect(videoRef.current);
+      if (isDiagnostic) {
+        if (detections.length > 0) {
+          const video = videoRef.current;
+          if (video) {
+            const vw = video.videoWidth || 1;
+            const vh = video.videoHeight || 1;
+            const boxes = detections
+              .map((det) => det.boundingBox)
+              .filter((box): box is DOMRectReadOnly => Boolean(box))
+              .map((box) => ({
+                left: (box.x / vw) * 100,
+                top: (box.y / vh) * 100,
+                width: (box.width / vw) * 100,
+                height: (box.height / vh) * 100,
+              }));
+            setDiagnosticBoxes(boxes);
+          }
+        } else {
+          setDiagnosticBoxes([]);
+        }
+      }
       if (detections.length > 0) {
         const { rawValue } = detections[0];
         if (rawValue) {
-          await processValue(rawValue);
+          await processValue(rawValue, "native");
         }
       }
     } catch (err) {
@@ -656,7 +890,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       return;
     }
     animationRef.current = requestAnimationFrame(scanLoop);
-  }, [processValue, stopCamera, useFallbackScanner]);
+  }, [forceFallback, isDiagnostic, processValue, stopCamera]);
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
@@ -675,7 +909,11 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setLockProgress(0);
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
-      if (useFallbackScanner) {
+      if (forceFallback || !detectorRef.current) {
+        const fallbackReady = await ensureFallbackScanner();
+        if (!fallbackReady) {
+          throw new Error("Fallback scanner unavailable");
+        }
         const reader = fallbackReaderRef.current;
         const video = videoRef.current;
         if (!reader || !video) {
@@ -688,24 +926,26 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
             if (result) {
               const text = result.getText();
               if (text) {
-                await processValue(text);
+                if (isDiagnostic) {
+                  setDiagnosticBoxes([]);
+                }
+                await processValue(text, "fallback");
               }
             } else if (
               err &&
               fallbackNotFoundRef.current &&
-              !(err instanceof fallbackNotFoundRef.current)
+              err instanceof fallbackNotFoundRef.current
             ) {
+              if (isDiagnostic) {
+                setDiagnosticBoxes([]);
+              }
+            } else if (err) {
               console.warn("Fallback scanner error", err);
             }
           },
         );
         setCameraState("running");
       } else {
-        if (!detectorRef.current) {
-          setCameraError("QR detection unavailable in this browser.");
-          setCameraState("error");
-          return;
-        }
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
@@ -721,6 +961,11 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         }
         video.srcObject = stream;
         await video.play();
+        if (!detectorRef.current) {
+          setCameraError("QR detection unavailable in this browser.");
+          setCameraState("error");
+          return;
+        }
         setCameraState("running");
         animationRef.current = requestAnimationFrame(scanLoop);
       }
@@ -729,7 +974,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setCameraState("error");
       setCameraError("Camera permission denied or unavailable.");
     }
-  }, [scanLoop, scannerSupported, useFallbackScanner, processValue]);
+  }, [
+    ensureFallbackScanner,
+    forceFallback,
+    isDiagnostic,
+    processValue,
+    scanLoop,
+    scannerSupported,
+  ]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
   const overlayMessage =
@@ -837,6 +1089,55 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                 </li>
               </ul>
             )}
+            {isDiagnostic && (
+              <div className="diagnostic-panel">
+                <div className="diagnostic-stats">
+                  <span>
+                    FPS:&nbsp;
+                    {diagnosticStats ? diagnosticStats.fps.toFixed(1) : "—"}
+                  </span>
+                  <span>
+                    Luminance:&nbsp;
+                    {diagnosticStats
+                      ? Math.round(diagnosticStats.luminance)
+                      : "—"}
+                  </span>
+                  <button className="link" onClick={clearDiagnosticLog}>
+                    Clear log
+                  </button>
+                </div>
+                <label className="diagnostic-toggle">
+                  <input
+                    type="checkbox"
+                    checked={forceFallback}
+                    onChange={() => onToggleFallback(!forceFallback)}
+                  />
+                  Force ZXing fallback
+                </label>
+                <div className="diagnostic-log">
+                  {diagnosticEntries.length === 0 ? (
+                    <p>No detections yet.</p>
+                  ) : (
+                    <ul>
+                      {diagnosticEntries
+                        .slice()
+                        .reverse()
+                        .map((entry) => (
+                          <li key={entry.timestamp}>
+                            <span className="diagnostic-timestamp">
+                              {new Date(entry.timestamp).toLocaleTimeString()}
+                            </span>
+                            <span className="diagnostic-source">
+                              {entry.source}
+                            </span>
+                            <code>{entry.value}</code>
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="capture-stage">
@@ -848,8 +1149,22 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                 autoPlay
                 muted
               />
+              <canvas ref={canvasRef} className="diagnostic-canvas" />
               <div className="capture-overlay">
                 <div className={reticleClassName} />
+                {isDiagnostic &&
+                  diagnosticBoxes.map((box, index) => (
+                    <span
+                      key={index}
+                      className="diagnostic-box"
+                      style={{
+                        left: `${box.left}%`,
+                        top: `${box.top}%`,
+                        width: `${box.width}%`,
+                        height: `${box.height}%`,
+                      }}
+                    />
+                  ))}
                 <div className="capture-instruction">{overlayMessage}</div>
               </div>
             </div>
@@ -877,6 +1192,9 @@ export default function App() {
   const [pyodideStatus, setPyodideStatus] = useState<PyodideStatus>("idle");
   const [pyodideError, setPyodideError] = useState<string | null>(null);
   const [role, setRole] = useState<Role>("none");
+  const [diagnosticMode, setDiagnosticMode] =
+    useState<DiagnosticMode>("standard");
+  const [forceFallback, setForceFallback] = useState(false);
   const buildInfo = window.__TIGHTBEAM_BUILD ?? "dev";
 
   useEffect(() => {
@@ -934,6 +1252,32 @@ export default function App() {
           {pyodideError && <span className="error-text">{pyodideError}</span>}
           <span className="build-tag">Build {buildInfo}</span>
         </div>
+        <div className="diagnostic-controls">
+          <label>
+            <input
+              type="checkbox"
+              checked={diagnosticMode === "diagnostic"}
+              onChange={(event) => {
+                const next = event.target.checked ? "diagnostic" : "standard";
+                setDiagnosticMode(next);
+                if (!event.target.checked) {
+                  setForceFallback(false);
+                }
+              }}
+            />
+            Diagnostic mode
+          </label>
+          {diagnosticMode === "diagnostic" && (
+            <label>
+              <input
+                type="checkbox"
+                checked={forceFallback}
+                onChange={(event) => setForceFallback(event.target.checked)}
+              />
+              Force ZXing fallback
+            </label>
+          )}
+        </div>
         {role === "none" && (
           <div className="role-actions">
             <button
@@ -968,11 +1312,15 @@ export default function App() {
             <SenderView
               callPythonJson={callPythonJson}
               onBack={() => setRole("none")}
+              diagnosticMode={diagnosticMode}
             />
           ) : (
             <ReceiverView
               callPythonJson={callPythonJson}
               onBack={() => setRole("none")}
+              diagnosticMode={diagnosticMode}
+              forceFallback={forceFallback}
+              onToggleFallback={setForceFallback}
             />
           )}
         </main>
