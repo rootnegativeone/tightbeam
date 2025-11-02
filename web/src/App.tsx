@@ -12,7 +12,6 @@ import "./App.css";
 
 type PyodideStatus = "idle" | "loading" | "ready" | "error";
 type Role = "none" | "sender" | "receiver";
-type DiagnosticMode = "standard" | "diagnostic";
 type PlaybackState = "idle" | "playing" | "finished";
 
 declare global {
@@ -114,25 +113,17 @@ type CallPythonJson = (fnName: string, ...args: unknown[]) => Promise<any>;
 type SenderViewProps = {
   callPythonJson: CallPythonJson;
   onBack: () => void;
-  diagnosticMode: DiagnosticMode;
 };
 
 type ReceiverViewProps = {
   callPythonJson: CallPythonJson;
   onBack: () => void;
-  diagnosticMode: DiagnosticMode;
-  forceFallback: boolean;
-  onToggleFallback: (next: boolean) => void;
 };
 
 type LockState = "idle" | "acquiring" | "locked";
 
-type BarcodePoint = { x: number; y: number };
-
 type BarcodeDetection = {
   rawValue: string;
-  boundingBox?: DOMRectReadOnly;
-  cornerPoints?: BarcodePoint[];
 };
 
 type BarcodeDetectorLike = {
@@ -190,11 +181,7 @@ const describeGuidance = (
   return "Almost there. Keep the QR in view for the final frames.";
 };
 
-const SenderView = ({
-  callPythonJson,
-  onBack,
-  diagnosticMode,
-}: SenderViewProps) => {
+const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const [isPreparing, setIsPreparing] = useState(false);
   const [broadcast, setBroadcast] = useState<BroadcastPackage | null>(null);
   const [playbackState, setPlaybackState] = useState<PlaybackState>("idle");
@@ -212,15 +199,6 @@ const SenderView = ({
   const frames = broadcast?.frames ?? [];
   const currentFrame = frames[currentFrameIndex];
   const totalFrames = broadcast?.total_frames ?? 0;
-  const isDiagnostic = diagnosticMode === "diagnostic";
-  const diagnosticFrame = useMemo(() => {
-    if (!broadcast) {
-      return null;
-    }
-    return broadcast.frames.find((frame) => frame.type === "sync") ?? null;
-  }, [broadcast]);
-  const displayFrame =
-    isDiagnostic && diagnosticFrame ? diagnosticFrame : currentFrame;
   const displaySize = Math.round(qrSize * sizeMultiplier);
 
   useEffect(() => {
@@ -323,23 +301,17 @@ const SenderView = ({
   useEffect(() => () => stopPlaybackTimer(), [stopPlaybackTimer]);
 
   const frameLabel = useMemo(() => {
-    if (!displayFrame) {
+    if (!currentFrame) {
       return "Ready";
     }
-    if (isDiagnostic) {
-      return "Diagnostic Sync Frame";
-    }
-    if (displayFrame.type === "sync") {
+    if (currentFrame.type === "sync") {
       return "Sync Frame";
     }
-    if (displayFrame.type === "meta") {
+    if (currentFrame.type === "meta") {
       return "Metadata";
     }
-    if (displayFrame.type === "symbol") {
-      return displayFrame.systematic ? "Systematic Frame" : "Redundant Frame";
-    }
-    return "Frame";
-  }, [displayFrame, isDiagnostic]);
+    return currentFrame.systematic ? "Systematic Frame" : "Redundant Frame";
+  }, [currentFrame]);
 
   return (
     <section className="panel">
@@ -354,40 +326,34 @@ const SenderView = ({
       <div className="panel-body">
         <div className="sender-grid">
           <div className="qr-stage">
-            {displayFrame ? (
+            {currentFrame ? (
               <QRCodeSVG
-                value={displayFrame.qr_value}
+                value={currentFrame.qr_value}
                 size={displaySize}
                 bgColor="#07130d"
                 fgColor="#d5ffe7"
               />
             ) : (
-              <div className="placeholder">
-                {isDiagnostic
-                  ? "Diagnostic mode — prepare broadcast to show sync frame"
-                  : "Prepare broadcast"}
-              </div>
+              <div className="placeholder">Prepare broadcast</div>
             )}
             <div className="frame-meta">
               <div>
-                {displayFrame
-                  ? isDiagnostic
-                    ? "Diagnostic sync frame"
-                    : `Frame ${currentFrameIndex + 1} of ${totalFrames}`
+                {currentFrame
+                  ? `Frame ${currentFrameIndex + 1} of ${totalFrames}`
                   : "Idle"}
               </div>
               <div>{frameLabel}</div>
-              {displayFrame?.type === "sync" && (
+              {currentFrame?.type === "sync" && (
                 <div>
-                  Sync {displayFrame.ordinal}/{displayFrame.total}
+                  Sync {currentFrame.ordinal}/{currentFrame.total}
                 </div>
               )}
-              {displayFrame?.type === "symbol" && (
+              {currentFrame?.type === "symbol" && (
                 <div>
-                  d{displayFrame.degree} · {displayFrame.indices.join(", ")}
+                  d{currentFrame.degree} · {currentFrame.indices.join(", ")}
                 </div>
               )}
-              {displayFrame?.type === "meta" && broadcast && (
+              {currentFrame?.type === "meta" && broadcast && (
                 <div>
                   Block {broadcast.metadata.block_size} · k=
                   {broadcast.metadata.k}
@@ -410,15 +376,13 @@ const SenderView = ({
                 onClick={
                   playbackState === "playing" ? handlePause : handleStartBurst
                 }
-                disabled={!broadcast || isDiagnostic}
+                disabled={!broadcast}
               >
-                {isDiagnostic
-                  ? "Start Burst"
-                  : playbackState === "playing"
-                    ? "Pause"
-                    : playbackState === "finished"
-                      ? "Replay"
-                      : "Start Burst"}
+                {playbackState === "playing"
+                  ? "Pause"
+                  : playbackState === "finished"
+                    ? "Replay"
+                    : "Start Burst"}
               </button>
             </div>
 
@@ -458,12 +422,6 @@ const SenderView = ({
                   />
                   <span>{Math.round(sizeMultiplier * 100)}%</span>
                 </label>
-                {isDiagnostic && (
-                  <p className="diagnostic-note">
-                    Diagnostic mode pins the first sync frame for camera tests.
-                    Click “Prepare broadcast” if you need a fresh sample.
-                  </p>
-                )}
                 <details>
                   <summary>Payload preview</summary>
                   <pre>{broadcast.payload_text}</pre>
@@ -479,13 +437,7 @@ const SenderView = ({
   );
 };
 
-const ReceiverView = ({
-  callPythonJson,
-  onBack,
-  diagnosticMode,
-  forceFallback,
-  onToggleFallback,
-}: ReceiverViewProps) => {
+const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [metadata, setMetadata] = useState<BroadcastMetadata | null>(null);
   const [status, setStatus] = useState<ReceiverStatus | null>(null);
   const [guidance, setGuidance] = useState<string>(
@@ -500,6 +452,10 @@ const ReceiverView = ({
   );
   const [useFallbackScanner, setUseFallbackScanner] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
+  const [recoveredPayload, setRecoveredPayload] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
+    "idle",
+  );
   const [lockState, setLockState] = useState<LockState>("idle");
   const [lockProgress, setLockProgress] = useState(0);
   const [lockTarget, setLockTarget] = useState<number | null>(null);
@@ -510,76 +466,42 @@ const ReceiverView = ({
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
   const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lockStateRef = useRef<LockState>("idle");
   const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
   const syncSequencesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimestampRef = useRef<number | null>(null);
-  const detectionStatsRef = useRef<{ lastTime: number; fps: number }>({
-    lastTime: 0,
-    fps: 0,
-  });
-  const isDiagnostic = diagnosticMode === "diagnostic";
-  const [diagnosticEntries, setDiagnosticEntries] = useState<{
-    timestamp: number;
-    value: string;
-    source: "native" | "fallback";
-  }>([]);
-  const [diagnosticStats, setDiagnosticStats] = useState<{
-    fps: number;
-    luminance: number;
-  } | null>(null);
-  const [diagnosticBoxes, setDiagnosticBoxes] = useState<
-    { left: number; top: number; width: number; height: number }[]
-  >([]);
-  const ensureFallbackScanner = useCallback(async () => {
-    if (fallbackReaderRef.current) {
-      setUseFallbackScanner(true);
-      setScannerSupported(true);
-      return true;
-    }
-    try {
-      const module = await import("@zxing/browser");
-      fallbackReaderRef.current = new module.BrowserQRCodeReader();
-      fallbackNotFoundRef.current = module.NotFoundException;
-      setUseFallbackScanner(true);
-      setScannerSupported(true);
-      return true;
-    } catch (err) {
-      console.error("ZXing fallback unavailable", err);
-      setScannerSupported(false);
-      return false;
-    }
-  }, []);
 
   useEffect(() => {
     const Detector = (
       window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }
     ).BarcodeDetector;
-    if (!forceFallback && Detector) {
+    if (Detector) {
       detectorRef.current = new Detector({ formats: ["qr_code"] });
       setScannerSupported(true);
     } else {
-      detectorRef.current = null;
-      void ensureFallbackScanner();
+      import("@zxing/browser")
+        .then((module) => {
+          fallbackReaderRef.current = new module.BrowserQRCodeReader();
+          fallbackNotFoundRef.current = module.NotFoundException;
+          setUseFallbackScanner(true);
+          setScannerSupported(true);
+        })
+        .catch((err) => {
+          console.error("ZXing fallback unavailable", err);
+          setScannerSupported(false);
+        });
     }
-  }, [forceFallback, ensureFallbackScanner]);
+  }, []);
 
   useEffect(() => {
     lockStateRef.current = lockState;
   }, [lockState]);
 
   useEffect(() => {
-    if (isDiagnostic) {
-      setGuidance(
-        "Diagnostic mode: point the camera at the sync frame and monitor detections below.",
-      );
-      return;
-    }
     setGuidance(
       describeGuidance(status, metadata, lockState, lockProgress, lockTarget),
     );
-  }, [isDiagnostic, status, metadata, lockState, lockProgress, lockTarget]);
+  }, [status, metadata, lockState, lockProgress, lockTarget]);
 
   const stopCamera = useCallback(() => {
     if (animationRef.current !== null) {
@@ -606,13 +528,19 @@ const ReceiverView = ({
     setLockProgress(0);
     setLockTarget(null);
     lastSymbolTimestampRef.current = null;
-    setDiagnosticEntries([]);
-    setDiagnosticStats(null);
-    setDiagnosticBoxes([]);
+    setRecoveredPayload(null);
+    setCopyState("idle");
     setCameraState("idle");
   }, [useFallbackScanner]);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  useEffect(() => {
+    if (status?.decode_complete && status.recovered_text) {
+      setRecoveredPayload(status.recovered_text);
+      setCopyState("idle");
+    }
+  }, [status]);
 
   const requestResync = useCallback(() => {
     if (lockStateRef.current !== "locked") {
@@ -626,80 +554,6 @@ const ReceiverView = ({
     setMetadata(null);
     lastSymbolTimestampRef.current = null;
   }, []);
-
-  useEffect(() => {
-    if (!isDiagnostic) {
-      setDiagnosticEntries([]);
-      setDiagnosticStats(null);
-      setDiagnosticBoxes([]);
-    }
-  }, [isDiagnostic]);
-
-  const computeLuminance = useCallback(() => {
-    if (!isDiagnostic) {
-      return 0;
-    }
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) {
-      return 0;
-    }
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) {
-      return 0;
-    }
-    const sampleWidth = 160;
-    const sampleHeight = Math.max(
-      1,
-      Math.round((height / width) * sampleWidth),
-    );
-    const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) {
-      return 0;
-    }
-    canvas.width = sampleWidth;
-    canvas.height = sampleHeight;
-    context.drawImage(video, 0, 0, sampleWidth, sampleHeight);
-    const { data } = context.getImageData(0, 0, sampleWidth, sampleHeight);
-    let sum = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      sum += 0.299 * r + 0.587 * g + 0.114 * b;
-    }
-    return sum / (data.length / 4);
-  }, [isDiagnostic]);
-
-  const logDetection = useCallback(
-    (value: string, source: "native" | "fallback") => {
-      if (!isDiagnostic) {
-        return;
-      }
-      setDiagnosticEntries((prev) => {
-        const next = [...prev, { timestamp: Date.now(), value, source }];
-        return next.slice(-15);
-      });
-      const now = performance.now();
-      const stats = detectionStatsRef.current;
-      if (stats.lastTime) {
-        const instantFps = 1000 / (now - stats.lastTime);
-        stats.fps = stats.fps ? stats.fps * 0.5 + instantFps * 0.5 : instantFps;
-      }
-      stats.lastTime = now;
-      const luminance = computeLuminance();
-      setDiagnosticStats({
-        fps: Number.isFinite(stats.fps) ? Number(stats.fps.toFixed(1)) : 0,
-        luminance: Number.isFinite(luminance)
-          ? Number(luminance.toFixed(1))
-          : 0,
-      });
-    },
-    [computeLuminance, isDiagnostic],
-  );
-
-  const clearDiagnosticLog = useCallback(() => setDiagnosticEntries([]), []);
 
   const handleMetadata = useCallback(
     async (meta: BroadcastMetadata) => {
@@ -718,42 +572,6 @@ const ReceiverView = ({
       lastSymbolTimestampRef.current = Date.now();
     },
     [callPythonJson],
-  );
-
-  const handleSync = useCallback(
-    async (payload: SyncPayload) => {
-      const required = payload.confirmation_required;
-      setLockTarget((current) => current ?? required);
-      if (lockStateRef.current === "idle") {
-        setLockState("acquiring");
-      }
-      if (!syncSequencesRef.current.has(payload.sequence)) {
-        syncSequencesRef.current.add(payload.sequence);
-        setLockProgress((prev) => {
-          const next = Math.min(prev + 1, required);
-          return next;
-        });
-      }
-      pendingMetadataRef.current = {
-        block_size: payload.block_size,
-        k: payload.k,
-        orig_len: payload.orig_len,
-        integrity_check: payload.integrity_check,
-      };
-      if (
-        syncSequencesRef.current.size >= required &&
-        lockStateRef.current !== "locked"
-      ) {
-        setLockState("locked");
-        setLockProgress(required);
-        const pendingMeta = pendingMetadataRef.current;
-        if (pendingMeta) {
-          await handleMetadata(pendingMeta);
-          pendingMetadataRef.current = null;
-        }
-      }
-    },
-    [handleMetadata],
   );
 
   useEffect(() => {
@@ -790,42 +608,21 @@ const ReceiverView = ({
   );
 
   const processValue = useCallback(
-    async (value: string, source: "native" | "fallback") => {
-      if (isDiagnostic) {
-        setLastFrame(value);
-        logDetection(value, source);
-        return;
-      }
-
+    async (value: string) => {
       if (value === lastValueRef.current) {
         return;
       }
       lastValueRef.current = value;
       setLastFrame(value);
-      logDetection(value, source);
-
-      if (value.startsWith("Y:")) {
-        try {
-          const payload = JSON.parse(value.slice(2)) as SyncPayload;
-          await handleSync(payload);
-        } catch (err) {
-          console.warn("Unable to parse sync payload", err);
-        }
-        return;
-      }
 
       if (value.startsWith("M:")) {
         const payload = value.slice(2);
         const meta = JSON.parse(payload) as BroadcastMetadata;
-        if (lockStateRef.current !== "locked") {
-          pendingMetadataRef.current = meta;
-          return;
-        }
         await handleMetadata(meta);
         return;
       }
 
-      if (!value.startsWith("S:") || lockStateRef.current !== "locked") {
+      if (!value.startsWith("S:")) {
         return;
       }
       const remainder = value.slice(2);
@@ -847,40 +644,22 @@ const ReceiverView = ({
       }
       await handleSymbol(sequence, indices, payloadHex);
     },
-    [handleMetadata, handleSymbol, handleSync, isDiagnostic, logDetection],
+    [handleMetadata, handleSymbol],
   );
 
   const scanLoop = useCallback(async () => {
-    if (forceFallback || !detectorRef.current || !videoRef.current) {
+    if (useFallbackScanner) {
+      return;
+    }
+    if (!detectorRef.current || !videoRef.current) {
       return;
     }
     try {
       const detections = await detectorRef.current.detect(videoRef.current);
-      if (isDiagnostic) {
-        if (detections.length > 0) {
-          const video = videoRef.current;
-          if (video) {
-            const vw = video.videoWidth || 1;
-            const vh = video.videoHeight || 1;
-            const boxes = detections
-              .map((det) => det.boundingBox)
-              .filter((box): box is DOMRectReadOnly => Boolean(box))
-              .map((box) => ({
-                left: (box.x / vw) * 100,
-                top: (box.y / vh) * 100,
-                width: (box.width / vw) * 100,
-                height: (box.height / vh) * 100,
-              }));
-            setDiagnosticBoxes(boxes);
-          }
-        } else {
-          setDiagnosticBoxes([]);
-        }
-      }
       if (detections.length > 0) {
         const { rawValue } = detections[0];
         if (rawValue) {
-          await processValue(rawValue, "native");
+          await processValue(rawValue);
         }
       }
     } catch (err) {
@@ -890,7 +669,7 @@ const ReceiverView = ({
       return;
     }
     animationRef.current = requestAnimationFrame(scanLoop);
-  }, [forceFallback, isDiagnostic, processValue, stopCamera]);
+  }, [processValue, stopCamera, useFallbackScanner]);
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
@@ -903,17 +682,15 @@ const ReceiverView = ({
       lastValueRef.current = null;
       setMetadata(null);
       setStatus(null);
+      setRecoveredPayload(null);
+      setCopyState("idle");
       syncSequencesRef.current.clear();
       pendingMetadataRef.current = null;
       setLockState("idle");
       setLockProgress(0);
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
-      if (forceFallback || !detectorRef.current) {
-        const fallbackReady = await ensureFallbackScanner();
-        if (!fallbackReady) {
-          throw new Error("Fallback scanner unavailable");
-        }
+      if (useFallbackScanner) {
         const reader = fallbackReaderRef.current;
         const video = videoRef.current;
         if (!reader || !video) {
@@ -926,26 +703,24 @@ const ReceiverView = ({
             if (result) {
               const text = result.getText();
               if (text) {
-                if (isDiagnostic) {
-                  setDiagnosticBoxes([]);
-                }
-                await processValue(text, "fallback");
+                await processValue(text);
               }
             } else if (
               err &&
               fallbackNotFoundRef.current &&
-              err instanceof fallbackNotFoundRef.current
+              !(err instanceof fallbackNotFoundRef.current)
             ) {
-              if (isDiagnostic) {
-                setDiagnosticBoxes([]);
-              }
-            } else if (err) {
               console.warn("Fallback scanner error", err);
             }
           },
         );
         setCameraState("running");
       } else {
+        if (!detectorRef.current) {
+          setCameraError("QR detection unavailable in this browser.");
+          setCameraState("error");
+          return;
+        }
         const stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: "environment",
@@ -961,11 +736,6 @@ const ReceiverView = ({
         }
         video.srcObject = stream;
         await video.play();
-        if (!detectorRef.current) {
-          setCameraError("QR detection unavailable in this browser.");
-          setCameraState("error");
-          return;
-        }
         setCameraState("running");
         animationRef.current = requestAnimationFrame(scanLoop);
       }
@@ -974,14 +744,7 @@ const ReceiverView = ({
       setCameraState("error");
       setCameraError("Camera permission denied or unavailable.");
     }
-  }, [
-    ensureFallbackScanner,
-    forceFallback,
-    isDiagnostic,
-    processValue,
-    scanLoop,
-    scannerSupported,
-  ]);
+  }, [scanLoop, scannerSupported, useFallbackScanner, processValue]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
   const overlayMessage =
@@ -1000,6 +763,28 @@ const ReceiverView = ({
               : "Locking onto sync burst…"
             : "Find the sync frames to begin locking."
         : "Tap Start Receiving to activate the camera.";
+  const lockDescriptor =
+    lockState === "locked"
+      ? "Lock engaged"
+      : lockState === "acquiring"
+        ? lockTarget
+          ? `Locking ${lockProgress}/${lockTarget}`
+          : "Locking…"
+        : "Lock idle";
+  const handleCopyPayload = useCallback(async () => {
+    if (!recoveredPayload) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(recoveredPayload);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 1600);
+    } catch (err) {
+      console.warn("Clipboard unavailable", err);
+      setCopyState("error");
+      window.setTimeout(() => setCopyState("idle"), 2000);
+    }
+  }, [recoveredPayload]);
   const reticleClassName = [
     "capture-reticle",
     cameraState !== "running" ? "is-inactive" : "",
@@ -1089,55 +874,6 @@ const ReceiverView = ({
                 </li>
               </ul>
             )}
-            {isDiagnostic && (
-              <div className="diagnostic-panel">
-                <div className="diagnostic-stats">
-                  <span>
-                    FPS:&nbsp;
-                    {diagnosticStats ? diagnosticStats.fps.toFixed(1) : "—"}
-                  </span>
-                  <span>
-                    Luminance:&nbsp;
-                    {diagnosticStats
-                      ? Math.round(diagnosticStats.luminance)
-                      : "—"}
-                  </span>
-                  <button className="link" onClick={clearDiagnosticLog}>
-                    Clear log
-                  </button>
-                </div>
-                <label className="diagnostic-toggle">
-                  <input
-                    type="checkbox"
-                    checked={forceFallback}
-                    onChange={() => onToggleFallback(!forceFallback)}
-                  />
-                  Force ZXing fallback
-                </label>
-                <div className="diagnostic-log">
-                  {diagnosticEntries.length === 0 ? (
-                    <p>No detections yet.</p>
-                  ) : (
-                    <ul>
-                      {diagnosticEntries
-                        .slice()
-                        .reverse()
-                        .map((entry) => (
-                          <li key={entry.timestamp}>
-                            <span className="diagnostic-timestamp">
-                              {new Date(entry.timestamp).toLocaleTimeString()}
-                            </span>
-                            <span className="diagnostic-source">
-                              {entry.source}
-                            </span>
-                            <code>{entry.value}</code>
-                          </li>
-                        ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="capture-stage">
@@ -1149,23 +885,29 @@ const ReceiverView = ({
                 autoPlay
                 muted
               />
-              <canvas ref={canvasRef} className="diagnostic-canvas" />
               <div className="capture-overlay">
-                <div className={reticleClassName} />
-                {isDiagnostic &&
-                  diagnosticBoxes.map((box, index) => (
-                    <span
-                      key={index}
-                      className="diagnostic-box"
-                      style={{
-                        left: `${box.left}%`,
-                        top: `${box.top}%`,
-                        width: `${box.width}%`,
-                        height: `${box.height}%`,
-                      }}
-                    />
-                  ))}
-                <div className="capture-instruction">{overlayMessage}</div>
+                <div className="overlay-top">
+                  <span
+                    className={[
+                      "lock-indicator",
+                      lockState === "locked"
+                        ? "is-locked"
+                        : lockState === "acquiring"
+                          ? "is-acquiring"
+                          : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    {lockDescriptor}
+                  </span>
+                </div>
+                <div className="overlay-middle">
+                  <div className={reticleClassName} />
+                </div>
+                <div className="overlay-bottom">
+                  <div className="capture-instruction">{overlayMessage}</div>
+                </div>
               </div>
             </div>
             <div className="capture-footer">
@@ -1174,12 +916,29 @@ const ReceiverView = ({
                   ? `Last capture: ${lastFrame.slice(0, 48)}…`
                   : "No frames yet"}
               </div>
-              {status?.recovered_text && (
-                <details>
-                  <summary>Reconstructed payload</summary>
-                  <pre>{status.recovered_text}</pre>
-                </details>
-              )}
+              <div className="payload-panel">
+                <div className="payload-header">
+                  <span>Reconstructed payload</span>
+                  <button
+                    className="link"
+                    onClick={handleCopyPayload}
+                    disabled={!recoveredPayload}
+                  >
+                    {copyState === "copied"
+                      ? "Copied!"
+                      : copyState === "error"
+                        ? "Copy failed"
+                        : "Copy"}
+                  </button>
+                </div>
+                <pre>
+                  {recoveredPayload
+                    ? recoveredPayload
+                    : status?.decode_complete
+                      ? "Payload will appear momentarily…"
+                      : "Payload will appear here once reconstructed."}
+                </pre>
+              </div>
             </div>
           </div>
         </div>
@@ -1192,9 +951,6 @@ export default function App() {
   const [pyodideStatus, setPyodideStatus] = useState<PyodideStatus>("idle");
   const [pyodideError, setPyodideError] = useState<string | null>(null);
   const [role, setRole] = useState<Role>("none");
-  const [diagnosticMode, setDiagnosticMode] =
-    useState<DiagnosticMode>("standard");
-  const [forceFallback, setForceFallback] = useState(false);
   const buildInfo = window.__TIGHTBEAM_BUILD ?? "dev";
 
   useEffect(() => {
@@ -1252,32 +1008,6 @@ export default function App() {
           {pyodideError && <span className="error-text">{pyodideError}</span>}
           <span className="build-tag">Build {buildInfo}</span>
         </div>
-        <div className="diagnostic-controls">
-          <label>
-            <input
-              type="checkbox"
-              checked={diagnosticMode === "diagnostic"}
-              onChange={(event) => {
-                const next = event.target.checked ? "diagnostic" : "standard";
-                setDiagnosticMode(next);
-                if (!event.target.checked) {
-                  setForceFallback(false);
-                }
-              }}
-            />
-            Diagnostic mode
-          </label>
-          {diagnosticMode === "diagnostic" && (
-            <label>
-              <input
-                type="checkbox"
-                checked={forceFallback}
-                onChange={(event) => setForceFallback(event.target.checked)}
-              />
-              Force ZXing fallback
-            </label>
-          )}
-        </div>
         {role === "none" && (
           <div className="role-actions">
             <button
@@ -1312,15 +1042,11 @@ export default function App() {
             <SenderView
               callPythonJson={callPythonJson}
               onBack={() => setRole("none")}
-              diagnosticMode={diagnosticMode}
             />
           ) : (
             <ReceiverView
               callPythonJson={callPythonJson}
               onBack={() => setRole("none")}
-              diagnosticMode={diagnosticMode}
-              forceFallback={forceFallback}
-              onToggleFallback={setForceFallback}
             />
           )}
         </main>

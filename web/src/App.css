@@ -60,20 +60,6 @@ body {
     flex-wrap: wrap;
 }
 
-.diagnostic-controls {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 0.8rem;
-    font-size: 0.9rem;
-    color: #bde9cf;
-}
-
-.diagnostic-controls input {
-    margin-right: 0.4rem;
-    accent-color: #0ddc7d;
-}
-
 .status-pill {
     padding: 0.25rem 0.75rem;
     border-radius: 999px;
@@ -414,10 +400,6 @@ body {
     transition: width 0.3s ease;
 }
 
-.progress-fill.is-sync {
-    background: linear-gradient(90deg, #00c6ff, #74f9ff);
-}
-
 .metrics-list {
     margin: 0;
     padding-left: 1.2rem;
@@ -454,35 +436,36 @@ body {
     filter: saturate(1.15) contrast(1.08);
 }
 
-.diagnostic-canvas {
-    position: absolute;
-    inset: 0;
-    opacity: 0;
-    pointer-events: none;
-}
-
 .capture-overlay {
     position: absolute;
     inset: 0;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    gap: 1.5rem;
+    justify-content: space-between;
+    padding: 1.1rem;
     pointer-events: none;
     background: linear-gradient(
         180deg,
-        rgba(5, 15, 10, 0.35) 0%,
+        rgba(5, 15, 10, 0.42) 0%,
         rgba(5, 15, 10, 0) 40%,
         rgba(5, 15, 10, 0.45) 100%
     );
 }
 
-.diagnostic-box {
-    position: absolute;
-    border: 2px solid rgba(0, 198, 255, 0.9);
-    border-radius: 8px;
-    box-shadow: 0 0 12px rgba(0, 198, 255, 0.35);
+.overlay-top,
+.overlay-bottom {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 0;
+}
+
+.overlay-middle {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0.4rem 0;
 }
 
 .capture-reticle {
@@ -527,7 +510,28 @@ body {
     font-size: 0.78rem;
     color: #9fffc8;
     text-align: center;
-    max-width: 86%;
+    max-width: 76%;
+}
+
+.lock-indicator {
+    padding: 0.35rem 0.9rem;
+    border-radius: 999px;
+    border: 1px solid rgba(126, 247, 175, 0.35);
+    background: rgba(5, 23, 18, 0.82);
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #7ef7af;
+}
+
+.lock-indicator.is-acquiring {
+    border-color: rgba(255, 196, 0, 0.45);
+    color: #ffdd8a;
+}
+
+.lock-indicator.is-locked {
+    border-color: rgba(7, 196, 108, 0.65);
+    color: #6effba;
 }
 
 .capture-footer {
@@ -543,107 +547,38 @@ body {
     color: #bdf5d6;
 }
 
-.diagnostic-panel {
-    margin-top: 1rem;
-    padding: 0.9rem;
-    border: 1px solid rgba(0, 198, 255, 0.32);
+.payload-panel {
+    border: 1px solid rgba(38, 118, 76, 0.35);
     border-radius: 14px;
-    background: rgba(4, 22, 28, 0.65);
+    padding: 0.7rem 0.9rem;
+    background: rgba(5, 18, 12, 0.82);
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.6rem;
 }
 
-.diagnostic-stats {
+.payload-header {
     display: flex;
-    gap: 1rem;
+    justify-content: space-between;
     align-items: center;
     font-size: 0.85rem;
-    color: #9be7ff;
+    color: #9fffc8;
 }
 
-.diagnostic-stats .link {
-    margin-left: auto;
-}
-
-.diagnostic-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.85rem;
-    color: #a4efff;
-}
-
-.diagnostic-log {
-    max-height: 160px;
-    overflow: auto;
-    background: rgba(2, 15, 20, 0.55);
-    border-radius: 10px;
-    padding: 0.6rem 0.75rem;
-    font-family:
-        "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.78rem;
-    color: #c9f6ff;
-}
-
-.diagnostic-log ul {
-    list-style: none;
+.payload-panel pre {
     margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 0.45rem;
-}
-
-.diagnostic-log li {
-    display: flex;
-    gap: 0.5rem;
-    align-items: baseline;
-}
-
-.diagnostic-timestamp {
-    color: rgba(155, 231, 255, 0.7);
-}
-
-.diagnostic-source {
-    color: #8af2ff;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.7rem;
-}
-
-.diagnostic-log code {
-    color: #faffff;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.diagnostic-note {
-    margin: 0.8rem 0 0;
-    font-size: 0.83rem;
-    color: rgba(204, 239, 220, 0.8);
-}
-
-.capture-footer details {
-    border-top: 1px solid rgba(38, 118, 76, 0.25);
-    padding-top: 0.6rem;
-}
-
-.capture-footer summary {
-    cursor: pointer;
-    color: #7ef7af;
-}
-
-.capture-footer pre {
-    margin: 0.6rem 0 0;
     max-height: 180px;
     overflow: auto;
     white-space: pre-wrap;
     word-break: break-word;
     font-family:
         "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
+    line-height: 1.45;
     color: #dff9eb;
+    background: rgba(3, 12, 9, 0.78);
+    padding: 0.55rem 0.6rem;
+    border-radius: 10px;
 }
 
 pre {
