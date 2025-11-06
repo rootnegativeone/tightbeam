@@ -566,6 +566,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     setStatus(null);
     setMetadata(null);
     lastSymbolTimestampRef.current = null;
+    pendingMetadataRef.current = null;
   }, []);
 
   const handleMetadata = useCallback(
@@ -585,6 +586,43 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       lastSymbolTimestampRef.current = Date.now();
     },
     [callPythonJson],
+  );
+
+  const handleSync = useCallback(
+    async (payload: SyncPayload) => {
+      const required = payload.confirmation_required;
+      setLockTarget((current) => current ?? required);
+
+      if (lockStateRef.current === "idle") {
+        setLockState("acquiring");
+      }
+
+      if (!syncSequencesRef.current.has(payload.sequence)) {
+        syncSequencesRef.current.add(payload.sequence);
+        setLockProgress((prev) => Math.min(prev + 1, required));
+      }
+
+      pendingMetadataRef.current = {
+        block_size: payload.block_size,
+        k: payload.k,
+        orig_len: payload.orig_len,
+        integrity_check: payload.integrity_check,
+      };
+
+      if (
+        syncSequencesRef.current.size >= required &&
+        lockStateRef.current !== "locked"
+      ) {
+        setLockState("locked");
+        setLockProgress(required);
+        const meta = pendingMetadataRef.current;
+        pendingMetadataRef.current = null;
+        if (meta) {
+          await handleMetadata(meta);
+        }
+      }
+    },
+    [handleMetadata],
   );
 
   useEffect(() => {
@@ -628,14 +666,28 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       lastValueRef.current = value;
       setLastFrame(value);
 
+      if (value.startsWith("Y:")) {
+        try {
+          const payload = JSON.parse(value.slice(2)) as SyncPayload;
+          await handleSync(payload);
+        } catch (err) {
+          console.warn("Unable to parse sync payload", err);
+        }
+        return;
+      }
+
       if (value.startsWith("M:")) {
         const payload = value.slice(2);
         const meta = JSON.parse(payload) as BroadcastMetadata;
+        if (lockStateRef.current !== "locked") {
+          pendingMetadataRef.current = meta;
+          return;
+        }
         await handleMetadata(meta);
         return;
       }
 
-      if (!value.startsWith("S:")) {
+      if (!value.startsWith("S:") || lockStateRef.current !== "locked") {
         return;
       }
       const remainder = value.slice(2);
@@ -657,7 +709,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       }
       await handleSymbol(sequence, indices, payloadHex);
     },
-    [handleMetadata, handleSymbol],
+    [handleMetadata, handleSymbol, handleSync],
   );
 
   const scanLoop = useCallback(async () => {
@@ -728,28 +780,46 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
             console.warn("Fallback reader reset issue", err);
           }
         };
-        reader.decodeFromVideoElementContinuously(
-          video,
-          async (result, err) => {
-            if (result) {
-              const text = result.getText();
-              if (text) {
-                await processValue(text);
-              }
-              return;
+        const continuousReader = reader as {
+          decodeFromVideoElementContinuously?: (
+            element: HTMLVideoElement,
+            callback: (
+              result: { getText(): string } | null,
+              error: unknown,
+            ) => Promise<void>,
+          ) => void;
+        };
+        const fallbackCallback = async (
+          result: { getText(): string } | null,
+          err: unknown,
+        ) => {
+          if (result) {
+            const text = result.getText();
+            if (text) {
+              await processValue(text);
             }
-            if (
-              err &&
-              fallbackNotFoundRef.current &&
-              err instanceof fallbackNotFoundRef.current
-            ) {
-              return;
-            }
-            if (err) {
-              console.warn("Fallback scanner error", err);
-            }
-          },
-        );
+            return;
+          }
+          if (
+            err &&
+            fallbackNotFoundRef.current &&
+            err instanceof fallbackNotFoundRef.current
+          ) {
+            return;
+          }
+          if (err) {
+            console.warn("Fallback scanner error", err);
+          }
+        };
+
+        if (continuousReader.decodeFromVideoElementContinuously) {
+          continuousReader.decodeFromVideoElementContinuously(
+            video,
+            fallbackCallback,
+          );
+        } else {
+          reader.decodeFromVideoDevice(undefined, video, fallbackCallback);
+        }
       } else {
         animationRef.current = requestAnimationFrame(scanLoop);
       }
@@ -757,7 +827,11 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     } catch (err) {
       console.error(err);
       setCameraState("error");
-      setCameraError("Camera permission denied or unavailable.");
+      setCameraError(
+        err instanceof Error
+          ? err.message
+          : "Camera permission denied or unavailable.",
+      );
     }
   }, [scanLoop, scannerSupported, ensureFallbackReader, processValue]);
 
