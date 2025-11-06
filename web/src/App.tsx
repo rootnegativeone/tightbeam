@@ -450,7 +450,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [scannerSupported, setScannerSupported] = useState<boolean | null>(
     null,
   );
-  const [useFallbackScanner, setUseFallbackScanner] = useState(false);
   const [lastFrame, setLastFrame] = useState<string | null>(null);
   const [recoveredPayload, setRecoveredPayload] = useState<string | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">(
@@ -466,10 +465,25 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
   const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
+  const fallbackDecodeCancelRef = useRef<(() => void) | null>(null);
   const lockStateRef = useRef<LockState>("idle");
   const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
   const syncSequencesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimestampRef = useRef<number | null>(null);
+
+  const ensureFallbackReader = useCallback(async () => {
+    try {
+      if (!fallbackReaderRef.current) {
+        const module = await import("@zxing/browser");
+        fallbackReaderRef.current = new module.BrowserQRCodeReader();
+        fallbackNotFoundRef.current = module.NotFoundException;
+      }
+      return true;
+    } catch (err) {
+      console.error("ZXing fallback unavailable", err);
+      return false;
+    }
+  }, []);
 
   useEffect(() => {
     const Detector = (
@@ -479,19 +493,10 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       detectorRef.current = new Detector({ formats: ["qr_code"] });
       setScannerSupported(true);
     } else {
-      import("@zxing/browser")
-        .then((module) => {
-          fallbackReaderRef.current = new module.BrowserQRCodeReader();
-          fallbackNotFoundRef.current = module.NotFoundException;
-          setUseFallbackScanner(true);
-          setScannerSupported(true);
-        })
-        .catch((err) => {
-          console.error("ZXing fallback unavailable", err);
-          setScannerSupported(false);
-        });
+      detectorRef.current = null;
+      ensureFallbackReader().then((ready) => setScannerSupported(ready));
     }
-  }, []);
+  }, [ensureFallbackReader]);
 
   useEffect(() => {
     lockStateRef.current = lockState;
@@ -508,7 +513,15 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
     }
-    if (useFallbackScanner && fallbackReaderRef.current) {
+    if (fallbackDecodeCancelRef.current) {
+      try {
+        fallbackDecodeCancelRef.current();
+      } catch (err) {
+        console.warn("Fallback reader cancel failed", err);
+      }
+      fallbackDecodeCancelRef.current = null;
+    }
+    if (fallbackReaderRef.current) {
       try {
         fallbackReaderRef.current.reset();
       } catch (err) {
@@ -531,7 +544,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     setRecoveredPayload(null);
     setCopyState("idle");
     setCameraState("idle");
-  }, [useFallbackScanner]);
+  }, []);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
@@ -648,9 +661,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   );
 
   const scanLoop = useCallback(async () => {
-    if (useFallbackScanner) {
-      return;
-    }
     if (!detectorRef.current || !videoRef.current) {
       return;
     }
@@ -663,13 +673,10 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         }
       }
     } catch (err) {
-      console.error(err);
-      setCameraError("Scanner interrupted. Refresh to retry.");
-      stopCamera();
-      return;
+      console.warn("Barcode detection failed; retrying", err);
     }
     animationRef.current = requestAnimationFrame(scanLoop);
-  }, [processValue, stopCamera, useFallbackScanner]);
+  }, [processValue]);
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
@@ -690,14 +697,38 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setLockProgress(0);
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
-      if (useFallbackScanner) {
-        const reader = fallbackReaderRef.current;
-        const video = videoRef.current;
-        if (!reader || !video) {
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) {
+        throw new Error("Video element unavailable");
+      }
+      video.srcObject = stream;
+      await video.play();
+
+      const shouldUseFallback = !detectorRef.current;
+      if (shouldUseFallback) {
+        const ready = await ensureFallbackReader();
+        if (!ready || !fallbackReaderRef.current) {
           throw new Error("Fallback scanner unavailable");
         }
-        await reader.decodeFromVideoDevice(
-          undefined,
+        const reader = fallbackReaderRef.current;
+        fallbackDecodeCancelRef.current = () => {
+          try {
+            reader.reset();
+          } catch (err) {
+            console.warn("Fallback reader reset issue", err);
+          }
+        };
+        reader.decodeFromVideoElementContinuously(
           video,
           async (result, err) => {
             if (result) {
@@ -705,46 +736,30 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
               if (text) {
                 await processValue(text);
               }
-            } else if (
+              return;
+            }
+            if (
               err &&
               fallbackNotFoundRef.current &&
-              !(err instanceof fallbackNotFoundRef.current)
+              err instanceof fallbackNotFoundRef.current
             ) {
+              return;
+            }
+            if (err) {
               console.warn("Fallback scanner error", err);
             }
           },
         );
-        setCameraState("running");
       } else {
-        if (!detectorRef.current) {
-          setCameraError("QR detection unavailable in this browser.");
-          setCameraState("error");
-          return;
-        }
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
-        streamRef.current = stream;
-        const video = videoRef.current;
-        if (!video) {
-          throw new Error("Video element unavailable");
-        }
-        video.srcObject = stream;
-        await video.play();
-        setCameraState("running");
         animationRef.current = requestAnimationFrame(scanLoop);
       }
+      setCameraState("running");
     } catch (err) {
       console.error(err);
       setCameraState("error");
       setCameraError("Camera permission denied or unavailable.");
     }
-  }, [scanLoop, scannerSupported, useFallbackScanner, processValue]);
+  }, [scanLoop, scannerSupported, ensureFallbackReader, processValue]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
   const overlayMessage =
