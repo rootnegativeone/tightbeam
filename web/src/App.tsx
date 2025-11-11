@@ -446,7 +446,13 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [cameraState, setCameraState] = useState<
     "idle" | "starting" | "running" | "error"
   >("idle");
+  const [activeCamera, setActiveCamera] = useState<"environment" | "user">(
+    "environment",
+  );
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraErrorDetails, setCameraErrorDetails] = useState<string | null>(
+    null,
+  );
   const [scannerSupported, setScannerSupported] = useState<boolean | null>(
     null,
   );
@@ -543,6 +549,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     lastSymbolTimestampRef.current = null;
     setRecoveredPayload(null);
     setCopyState("idle");
+    setCameraErrorDetails(null);
     setCameraState("idle");
   }, []);
 
@@ -732,6 +739,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
 
   const startCamera = useCallback(async () => {
     setCameraError(null);
+    setCameraErrorDetails(null);
     if (scannerSupported === false) {
       setCameraError("QR detection unavailable in this browser.");
       return;
@@ -750,14 +758,43 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
 
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const preferEnvironment = activeCamera === "environment";
+      const getConstraints = (mode: "environment" | "user") => ({
         video: {
-          facingMode: "environment",
+          facingMode: { ideal: mode },
           width: { ideal: 1280 },
           height: { ideal: 720 },
         },
         audio: false,
       });
+
+      let stream: MediaStream | null = null;
+      let modeUsed: "environment" | "user" = activeCamera;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(
+          getConstraints(activeCamera),
+        );
+      } catch (err) {
+        if (preferEnvironment) {
+          console.warn(
+            "Environment camera unavailable, trying user-facing.",
+            err,
+          );
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(
+              getConstraints("user"),
+            );
+            modeUsed = "user";
+          } catch (fallbackErr) {
+            throw fallbackErr;
+          }
+        } else {
+          throw err;
+        }
+      }
+      if (!stream) {
+        throw new Error("Unable to access camera stream");
+      }
       streamRef.current = stream;
       const video = videoRef.current;
       if (!video) {
@@ -765,6 +802,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       }
       video.srcObject = stream;
       await video.play();
+      setActiveCamera(modeUsed);
 
       const shouldUseFallback = !detectorRef.current;
       if (shouldUseFallback) {
@@ -827,13 +865,20 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     } catch (err) {
       console.error(err);
       setCameraState("error");
-      setCameraError(
+      const message =
         err instanceof Error
           ? err.message
-          : "Camera permission denied or unavailable.",
-      );
+          : "Camera permission denied or unavailable.";
+      setCameraError("Camera unavailable");
+      setCameraErrorDetails(message);
     }
-  }, [scanLoop, scannerSupported, ensureFallbackReader, processValue]);
+  }, [
+    activeCamera,
+    ensureFallbackReader,
+    processValue,
+    scanLoop,
+    scannerSupported,
+  ]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
   const overlayMessage =
@@ -915,8 +960,30 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
               <button className="action secondary" onClick={stopCamera}>
                 Stop
               </button>
+              <button
+                className="link"
+                onClick={() =>
+                  setActiveCamera((prev) =>
+                    prev === "environment" ? "user" : "environment",
+                  )
+                }
+                disabled={cameraState === "running"}
+              >
+                Use {activeCamera === "environment" ? "Front" : "Rear"} Camera
+              </button>
             </div>
-            {cameraError && <div className="error-text">{cameraError}</div>}
+            <div className="camera-status">
+              Active camera:{" "}
+              {activeCamera === "environment" ? "Rear (environment)" : "Front"}
+            </div>
+            {cameraError && (
+              <div className="error-text">
+                {cameraError}
+                {cameraErrorDetails && (
+                  <span className="error-details"> — {cameraErrorDetails}</span>
+                )}
+              </div>
+            )}
             <div className="progress">
               <div className="progress-label">
                 Coverage &nbsp;{coveragePercent}
