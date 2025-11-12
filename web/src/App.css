@@ -345,6 +345,68 @@ body {
     color: #dff9eb;
 }
 
+.test-mode {
+    margin-top: 1.1rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid rgba(38, 118, 76, 0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.test-mode h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #92f2c0;
+}
+
+.test-mode p {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: rgba(197, 255, 225, 0.82);
+}
+
+.test-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+}
+
+.test-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    color: #9fffc8;
+}
+
+.test-controls select {
+    background: rgba(5, 25, 16, 0.85);
+    border: 1px solid rgba(38, 118, 76, 0.45);
+    border-radius: 10px;
+    padding: 0.4rem 0.6rem;
+    color: #dff9eb;
+    font-size: 0.85rem;
+}
+
+.test-frame-preview {
+    background: rgba(4, 18, 11, 0.78);
+    border: 1px solid rgba(38, 118, 76, 0.35);
+    border-radius: 12px;
+    padding: 0.6rem 0.75rem;
+    display: grid;
+    gap: 0.4rem;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.test-frame-label {
+    font-size: 0.78rem;
+    color: rgba(126, 247, 175, 0.85);
+}
+
 .receiver-grid {
     display: grid;
     gap: 1.6rem;
@@ -377,6 +439,42 @@ body {
 .camera-status {
     font-size: 0.85rem;
     color: rgba(159, 255, 200, 0.75);
+}
+
+.diagnostic-hint {
+    font-size: 0.78rem;
+    color: rgba(173, 246, 255, 0.82);
+    background: rgba(3, 20, 26, 0.55);
+    border: 1px solid rgba(0, 198, 255, 0.35);
+    border-radius: 10px;
+    padding: 0.45rem 0.6rem;
+    display: grid;
+    gap: 0.3rem;
+    word-break: break-word;
+}
+
+.manual-decode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.manual-status {
+    font-size: 0.8rem;
+    color: rgba(173, 246, 255, 0.82);
+}
+
+.manual-status-success {
+    color: #7ef7af;
+}
+
+.manual-status-error {
+    color: #ffbfa3;
+}
+
+.manual-status-pending {
+    color: #ffe38a;
 }
 
 .error-details {
@@ -446,6 +544,22 @@ body {
     height: 100%;
     object-fit: cover;
     filter: saturate(1.15) contrast(1.08);
+}
+
+.capture-sample-canvas {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.capture-manual-canvas {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .capture-overlay {
