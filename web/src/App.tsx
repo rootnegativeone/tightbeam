@@ -145,6 +145,34 @@ type ZXingReader = {
 
 type ZXingNotFound = new (...args: any[]) => Error;
 
+type FallbackStats = {
+  detections: number;
+  lastValue: string | null;
+  luminance: number | null;
+  lastDetectionAt: number | null;
+  detectionIntervalMs: number | null;
+};
+
+type VideoDiagnostics = {
+  width: number;
+  height: number;
+  aspect: number | null;
+};
+
+const createFallbackStats = (): FallbackStats => ({
+  detections: 0,
+  lastValue: null,
+  luminance: null,
+  lastDetectionAt: null,
+  detectionIntervalMs: null,
+});
+
+const createVideoDiagnostics = (): VideoDiagnostics => ({
+  width: 0,
+  height: 0,
+  aspect: null,
+});
+
 const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 const describeGuidance = (
@@ -464,9 +492,21 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [lockState, setLockState] = useState<LockState>("idle");
   const [lockProgress, setLockProgress] = useState(0);
   const [lockTarget, setLockTarget] = useState<number | null>(null);
+  const [stoppedAfterCompletion, setStoppedAfterCompletion] = useState(false);
+  const [captureMode, setCaptureMode] = useState<"native" | "fallback">(
+    "native",
+  );
+  const [fallbackStats, setFallbackStats] = useState<FallbackStats>(() =>
+    createFallbackStats(),
+  );
+  const [videoDiagnostics, setVideoDiagnostics] = useState<VideoDiagnostics>(
+    () => createVideoDiagnostics(),
+  );
+  const [, forceDiagnosticUpdate] = useState(0);
   const lastValueRef = useRef<string | null>(null);
   const animationRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
@@ -476,6 +516,60 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
   const syncSequencesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimestampRef = useRef<number | null>(null);
+  const updateVideoDiagnostics = useCallback(() => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth || !video.videoHeight) {
+      return;
+    }
+    // Capture the observed camera resolution to validate device feed quality.
+    const aspect =
+      video.videoHeight > 0
+        ? Math.round((video.videoWidth / video.videoHeight) * 1000) / 1000
+        : null;
+    setVideoDiagnostics({
+      width: video.videoWidth,
+      height: video.videoHeight,
+      aspect,
+    });
+  }, [setVideoDiagnostics]);
+  const computeLuminance = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = sampleCanvasRef.current;
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+      return null;
+    }
+
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) {
+      return null;
+    }
+
+    const sampleWidth = 64;
+    const sampleHeight = Math.max(
+      1,
+      Math.round((video.videoHeight / video.videoWidth) * sampleWidth),
+    );
+
+    canvas.width = sampleWidth;
+    canvas.height = sampleHeight;
+    ctx.drawImage(video, 0, 0, sampleWidth, sampleHeight);
+
+    const { data } = ctx.getImageData(0, 0, sampleWidth, sampleHeight);
+    const pixels = data.length / 4;
+    if (!pixels) {
+      return null;
+    }
+
+    let sum = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      sum += 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    return sum / pixels;
+  }, []);
 
   const ensureFallbackReader = useCallback(async () => {
     try {
@@ -514,44 +608,68 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     );
   }, [status, metadata, lockState, lockProgress, lockTarget]);
 
-  const stopCamera = useCallback(() => {
-    if (animationRef.current !== null) {
-      cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
+  useEffect(() => {
+    if (cameraState !== "running") {
+      return;
     }
-    if (fallbackDecodeCancelRef.current) {
-      try {
-        fallbackDecodeCancelRef.current();
-      } catch (err) {
-        console.warn("Fallback reader cancel failed", err);
+    const handleResize = () => updateVideoDiagnostics();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [cameraState, updateVideoDiagnostics]);
+
+  useEffect(() => {
+    if (cameraState !== "running") {
+      return;
+    }
+    // Refresh the diagnostics HUD while the camera is live.
+    const timer = window.setInterval(() => {
+      forceDiagnosticUpdate((prev) => (prev + 1) % Number.MAX_SAFE_INTEGER);
+      updateVideoDiagnostics();
+    }, 750);
+    return () => window.clearInterval(timer);
+  }, [cameraState, forceDiagnosticUpdate, updateVideoDiagnostics]);
+
+  const stopCamera = useCallback(
+    (options: { preservePayload?: boolean } = {}) => {
+      const { preservePayload = false } = options;
+      if (animationRef.current !== null) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
-      fallbackDecodeCancelRef.current = null;
-    }
-    if (fallbackReaderRef.current) {
-      try {
-        fallbackReaderRef.current.reset();
-      } catch (err) {
-        console.warn("Fallback reader reset failed", err);
+      if (fallbackDecodeCancelRef.current) {
+        try {
+          fallbackDecodeCancelRef.current();
+        } catch (err) {
+          console.warn("Fallback reader cancel failed", err);
+        }
+        fallbackDecodeCancelRef.current = null;
       }
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    syncSequencesRef.current.clear();
-    pendingMetadataRef.current = null;
-    setLockState("idle");
-    setLockProgress(0);
-    setLockTarget(null);
-    lastSymbolTimestampRef.current = null;
-    setRecoveredPayload(null);
-    setCopyState("idle");
-    setCameraErrorDetails(null);
-    setCameraState("idle");
-  }, []);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      syncSequencesRef.current.clear();
+      pendingMetadataRef.current = null;
+      setLockState("idle");
+      setLockProgress(0);
+      setLockTarget(null);
+      lastSymbolTimestampRef.current = null;
+      if (!preservePayload) {
+        setRecoveredPayload(null);
+        setCopyState("idle");
+      }
+      setStoppedAfterCompletion(false);
+      setCaptureMode("native");
+      setFallbackStats(createFallbackStats());
+      setVideoDiagnostics(createVideoDiagnostics());
+      setCameraErrorDetails(null);
+      setCameraState("idle");
+    },
+    [],
+  );
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
@@ -740,6 +858,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const startCamera = useCallback(async () => {
     setCameraError(null);
     setCameraErrorDetails(null);
+    setFallbackStats(createFallbackStats());
+    setVideoDiagnostics(createVideoDiagnostics());
+    setCaptureMode("native");
     if (scannerSupported === false) {
       setCameraError("QR detection unavailable in this browser.");
       return;
@@ -757,6 +878,8 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setLockProgress(0);
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
+      setCaptureMode("native");
+      setFallbackStats(createFallbackStats());
 
       const preferEnvironment = activeCamera === "environment";
       const getConstraints = (mode: "environment" | "user") => ({
@@ -802,6 +925,8 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       }
       video.srcObject = stream;
       await video.play();
+      updateVideoDiagnostics();
+      window.setTimeout(() => updateVideoDiagnostics(), 250);
       setActiveCamera(modeUsed);
 
       const shouldUseFallback = !detectorRef.current;
@@ -834,6 +959,25 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
           if (result) {
             const text = result.getText();
             if (text) {
+              const luminance = computeLuminance();
+              const sampleTime = Date.now();
+              setFallbackStats((prev) => {
+                const interval =
+                  prev.lastDetectionAt !== null
+                    ? sampleTime - prev.lastDetectionAt
+                    : null;
+                const averaged =
+                  interval !== null && prev.detectionIntervalMs !== null
+                    ? prev.detectionIntervalMs * 0.7 + interval * 0.3
+                    : interval;
+                return {
+                  detections: prev.detections + 1,
+                  lastValue: text,
+                  luminance,
+                  lastDetectionAt: sampleTime,
+                  detectionIntervalMs: averaged ?? null,
+                };
+              });
               await processValue(text);
             }
             return;
@@ -850,6 +994,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
           }
         };
 
+        setCaptureMode("fallback");
         if (continuousReader.decodeFromVideoElementContinuously) {
           continuousReader.decodeFromVideoElementContinuously(
             video,
@@ -905,6 +1050,38 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
           ? `Locking ${lockProgress}/${lockTarget}`
           : "Locking…"
         : "Lock idle";
+  const videoResolutionLabel =
+    videoDiagnostics.width && videoDiagnostics.height
+      ? `${videoDiagnostics.width}×${videoDiagnostics.height}`
+      : "—";
+  const aspectLabel =
+    videoDiagnostics.aspect !== null
+      ? `AR ${videoDiagnostics.aspect.toFixed(3).replace(/\.?0+$/, "")}:1`
+      : null;
+  const detectionCadenceLabel =
+    fallbackStats.detectionIntervalMs && fallbackStats.detectionIntervalMs > 0
+      ? `${(1000 / fallbackStats.detectionIntervalMs).toFixed(2)} Hz`
+      : null;
+  const detectionIntervalLabel =
+    fallbackStats.detectionIntervalMs !== null
+      ? `${Math.round(fallbackStats.detectionIntervalMs)} ms`
+      : null;
+  const detectionAgeSeconds =
+    fallbackStats.lastDetectionAt !== null
+      ? (Date.now() - fallbackStats.lastDetectionAt) / 1000
+      : null;
+  const detectionAgeLabel =
+    detectionAgeSeconds !== null
+      ? `${
+          detectionAgeSeconds >= 10
+            ? Math.round(detectionAgeSeconds)
+            : detectionAgeSeconds.toFixed(1)
+        } s`
+      : null;
+  const luminanceLabel =
+    fallbackStats.luminance !== null
+      ? Math.round(fallbackStats.luminance).toString()
+      : null;
   const handleCopyPayload = useCallback(async () => {
     if (!recoveredPayload) {
       return;
@@ -976,6 +1153,43 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
               Active camera:{" "}
               {activeCamera === "environment" ? "Rear (environment)" : "Front"}
             </div>
+            <div className="diagnostic-hint">
+              <div>
+                Decoder:{" "}
+                {captureMode === "fallback"
+                  ? "ZXing fallback"
+                  : "BarcodeDetector"}
+              </div>
+              <div>
+                Video feed: {videoResolutionLabel}
+                {aspectLabel ? ` · ${aspectLabel}` : ""}
+              </div>
+              {captureMode === "fallback" && (
+                <>
+                  <div>
+                    Detections: {fallbackStats.detections}
+                    {fallbackStats.lastValue && (
+                      <>
+                        {" "}
+                        · Last frame:{" "}
+                        <code>{fallbackStats.lastValue.slice(0, 24)}…</code>
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    Avg cadence: {detectionCadenceLabel ?? "—"}
+                    {detectionIntervalLabel
+                      ? ` (${detectionIntervalLabel})`
+                      : ""}
+                  </div>
+                  <div>
+                    Last hit:{" "}
+                    {detectionAgeLabel ? `${detectionAgeLabel} ago` : "—"}
+                  </div>
+                  <div>Estimated luminance: {luminanceLabel ?? "—"}</div>
+                </>
+              )}
+            </div>
             {cameraError && (
               <div className="error-text">
                 {cameraError}
@@ -1041,6 +1255,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                 autoPlay
                 muted
               />
+              <canvas ref={sampleCanvasRef} className="capture-sample-canvas" />
               <div className="capture-overlay">
                 <div className="overlay-top">
                   <span
