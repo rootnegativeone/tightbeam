@@ -233,6 +233,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       : 320,
   );
   const [sizeMultiplier, setSizeMultiplier] = useState(1);
+  const [useBrandPalette, setUseBrandPalette] = useState(false);
   const [testFrameIndex, setTestFrameIndex] = useState<number | null>(null);
   const [testCopyState, setTestCopyState] = useState<
     "idle" | "copied" | "error"
@@ -246,6 +247,13 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const totalFrames = broadcast?.total_frames ?? 0;
   const isTestMode = testFrameIndex !== null;
   const displaySize = Math.round(qrSize * sizeMultiplier);
+  const qrColors = useMemo(
+    () =>
+      useBrandPalette
+        ? { bg: "#07130d", fg: "#d5ffe7" }
+        : { bg: "#ffffff", fg: "#000000" },
+    [useBrandPalette],
+  );
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -274,6 +282,10 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     },
     [],
   );
+
+  const handleToggleBrandPalette = useCallback(() => {
+    setUseBrandPalette((prev) => !prev);
+  }, []);
 
   const stopPlaybackTimer = useCallback(() => {
     if (playbackTimer.current !== null) {
@@ -457,8 +469,10 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
               <QRCodeSVG
                 value={displayFrame.qr_value}
                 size={displaySize}
-                bgColor="#07130d"
-                fgColor="#d5ffe7"
+                bgColor={qrColors.bg}
+                fgColor={qrColors.fg}
+                includeMargin
+                level="H"
               />
             ) : (
               <div className="placeholder">
@@ -556,6 +570,14 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                       onChange={handleSizeChange}
                     />
                     <span>{Math.round(sizeMultiplier * 100)}%</span>
+                  </label>
+                  <label className="brand-toggle">
+                    <input
+                      type="checkbox"
+                      checked={useBrandPalette}
+                      onChange={handleToggleBrandPalette}
+                    />
+                    Use brand palette
                   </label>
                   <details>
                     <summary>Payload preview</summary>
