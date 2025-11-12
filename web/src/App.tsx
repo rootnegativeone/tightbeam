@@ -159,6 +159,11 @@ type VideoDiagnostics = {
   aspect: number | null;
 };
 
+type ManualDecodeState = {
+  status: "idle" | "pending" | "success" | "error";
+  message: string | null;
+};
+
 const createFallbackStats = (): FallbackStats => ({
   detections: 0,
   lastValue: null,
@@ -171,6 +176,11 @@ const createVideoDiagnostics = (): VideoDiagnostics => ({
   width: 0,
   height: 0,
   aspect: null,
+});
+
+const createManualDecodeState = (): ManualDecodeState => ({
+  status: "idle",
+  message: null,
 });
 
 const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
@@ -223,10 +233,18 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       : 320,
   );
   const [sizeMultiplier, setSizeMultiplier] = useState(1);
+  const [testFrameIndex, setTestFrameIndex] = useState<number | null>(null);
+  const [testCopyState, setTestCopyState] = useState<
+    "idle" | "copied" | "error"
+  >("idle");
 
   const frames = broadcast?.frames ?? [];
   const currentFrame = frames[currentFrameIndex];
+  const displayFrameIndex =
+    testFrameIndex !== null ? testFrameIndex : currentFrameIndex;
+  const displayFrame = frames[displayFrameIndex];
   const totalFrames = broadcast?.total_frames ?? 0;
+  const isTestMode = testFrameIndex !== null;
   const displaySize = Math.round(qrSize * sizeMultiplier);
 
   useEffect(() => {
@@ -257,6 +275,85 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     [],
   );
 
+  const testOptions = useMemo(() => {
+    if (!broadcast) {
+      return [];
+    }
+    const options: { index: number; label: string }[] = [];
+    let firstMeta: number | null = null;
+    let firstSync: number | null = null;
+    let firstSystematic: number | null = null;
+    let firstRedundant: number | null = null;
+
+    broadcast.frames.forEach((frame, idx) => {
+      if (frame.type === "meta" && firstMeta === null) {
+        firstMeta = idx;
+      } else if (frame.type === "sync" && firstSync === null) {
+        firstSync = idx;
+      } else if (frame.type === "symbol") {
+        if (frame.systematic && firstSystematic === null) {
+          firstSystematic = idx;
+        }
+        if (!frame.systematic && firstRedundant === null) {
+          firstRedundant = idx;
+        }
+      }
+    });
+
+    const pushOption = (index: number | null, label: string) => {
+      if (index !== null) {
+        options.push({ index, label });
+      }
+    };
+
+    pushOption(firstMeta, "Metadata frame");
+    pushOption(firstSync, "Sync frame");
+    pushOption(firstSystematic, "Systematic symbol");
+    pushOption(firstRedundant, "Redundant symbol");
+
+    return options;
+  }, [broadcast]);
+
+  useEffect(() => {
+    setTestFrameIndex(null);
+    setTestCopyState("idle");
+  }, [broadcast]);
+
+  const handleTestFrameChange = useCallback(
+    (event: ChangeEvent<HTMLSelectElement>) => {
+      const value = event.target.value;
+      if (value === "none") {
+        setTestFrameIndex(null);
+        setTestCopyState("idle");
+        return;
+      }
+      const nextIndex = Number.parseInt(value, 10);
+      if (Number.isNaN(nextIndex)) {
+        return;
+      }
+      stopPlaybackTimer();
+      setPlaybackState("idle");
+      setTestFrameIndex(nextIndex);
+      setCurrentFrameIndex(nextIndex);
+    },
+    [stopPlaybackTimer],
+  );
+
+  const handleCopyTestFrame = useCallback(async () => {
+    if (!displayFrame) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(displayFrame.qr_value);
+      setTestCopyState("copied");
+      window.setTimeout(() => setTestCopyState("idle"), 1600);
+    } catch (err) {
+      console.warn("Unable to copy frame QR value", err);
+      setTestCopyState("error");
+      window.setTimeout(() => setTestCopyState("idle"), 2000);
+    }
+  }, [displayFrame]);
+
   const handlePrepare = useCallback(async () => {
     setIsPreparing(true);
     setError(null);
@@ -285,6 +382,8 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       return;
     }
     stopPlaybackTimer();
+    setTestFrameIndex(null);
+    setTestCopyState("idle");
     setCurrentFrameIndex(0);
     setPlaybackState("playing");
   }, [broadcast, stopPlaybackTimer]);
@@ -329,17 +428,17 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   useEffect(() => () => stopPlaybackTimer(), [stopPlaybackTimer]);
 
   const frameLabel = useMemo(() => {
-    if (!currentFrame) {
-      return "Ready";
+    if (!displayFrame) {
+      return isTestMode ? "Select a test frame" : "Ready";
     }
-    if (currentFrame.type === "sync") {
+    if (displayFrame.type === "sync") {
       return "Sync Frame";
     }
-    if (currentFrame.type === "meta") {
+    if (displayFrame.type === "meta") {
       return "Metadata";
     }
-    return currentFrame.systematic ? "Systematic Frame" : "Redundant Frame";
-  }, [currentFrame]);
+    return displayFrame.systematic ? "Systematic Frame" : "Redundant Frame";
+  }, [displayFrame, isTestMode]);
 
   return (
     <section className="panel">
@@ -354,34 +453,41 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       <div className="panel-body">
         <div className="sender-grid">
           <div className="qr-stage">
-            {currentFrame ? (
+            {displayFrame ? (
               <QRCodeSVG
-                value={currentFrame.qr_value}
+                value={displayFrame.qr_value}
                 size={displaySize}
                 bgColor="#07130d"
                 fgColor="#d5ffe7"
               />
             ) : (
-              <div className="placeholder">Prepare broadcast</div>
+              <div className="placeholder">
+                {isTestMode ? "Choose a test frame" : "Prepare broadcast"}
+              </div>
             )}
             <div className="frame-meta">
               <div>
-                {currentFrame
-                  ? `Frame ${currentFrameIndex + 1} of ${totalFrames}`
-                  : "Idle"}
+                {displayFrame
+                  ? `Frame ${displayFrameIndex + 1} of ${totalFrames}`
+                  : isTestMode
+                    ? "Test frame not selected"
+                    : "Idle"}
               </div>
-              <div>{frameLabel}</div>
-              {currentFrame?.type === "sync" && (
+              <div>
+                {frameLabel}
+                {isTestMode && displayFrame ? " · Test mode" : ""}
+              </div>
+              {displayFrame?.type === "sync" && (
                 <div>
-                  Sync {currentFrame.ordinal}/{currentFrame.total}
+                  Sync {displayFrame.ordinal}/{displayFrame.total}
                 </div>
               )}
-              {currentFrame?.type === "symbol" && (
+              {displayFrame?.type === "symbol" && (
                 <div>
-                  d{currentFrame.degree} · {currentFrame.indices.join(", ")}
+                  d{displayFrame.degree} · {displayFrame.indices.join(", ")}
                 </div>
               )}
-              {currentFrame?.type === "meta" && broadcast && (
+              {displayFrame?.type === "meta" && broadcast && (
                 <div>
                   Block {broadcast.metadata.block_size} · k=
                   {broadcast.metadata.k}
@@ -415,46 +521,95 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
             </div>
 
             {broadcast && (
-              <div className="stats">
-                <h3>Transmission Stats</h3>
-                <ul>
-                  <li>
-                    Frames: {broadcast.total_frames} (
-                    {broadcast.systematic_count} systematic +{" "}
-                    {broadcast.redundant_count} redundant)
-                  </li>
-                  <li>Block size: {broadcast.metadata.block_size} bytes</li>
-                  <li>Source blocks (k): {broadcast.metadata.k}</li>
-                  <li>
-                    Sync preamble: {broadcast.sync.preamble_count} frames ·
-                    reinserts every {broadcast.sync.interval} symbols
-                  </li>
-                </ul>
-                <label className="loop-toggle">
-                  <input
-                    type="checkbox"
-                    checked={autoLoop}
-                    onChange={handleToggleLoop}
-                  />
-                  Auto loop bursts
-                </label>
-                <label className="size-control">
-                  <span>QR size boost</span>
-                  <input
-                    type="range"
-                    min="1"
-                    max="1.4"
-                    step="0.05"
-                    value={sizeMultiplier}
-                    onChange={handleSizeChange}
-                  />
-                  <span>{Math.round(sizeMultiplier * 100)}%</span>
-                </label>
-                <details>
-                  <summary>Payload preview</summary>
-                  <pre>{broadcast.payload_text}</pre>
-                </details>
-              </div>
+              <>
+                <div className="stats">
+                  <h3>Transmission Stats</h3>
+                  <ul>
+                    <li>
+                      Frames: {broadcast.total_frames} (
+                      {broadcast.systematic_count} systematic +{" "}
+                      {broadcast.redundant_count} redundant)
+                    </li>
+                    <li>Block size: {broadcast.metadata.block_size} bytes</li>
+                    <li>Source blocks (k): {broadcast.metadata.k}</li>
+                    <li>
+                      Sync preamble: {broadcast.sync.preamble_count} frames ·
+                      reinserts every {broadcast.sync.interval} symbols
+                    </li>
+                  </ul>
+                  <label className="loop-toggle">
+                    <input
+                      type="checkbox"
+                      checked={autoLoop}
+                      onChange={handleToggleLoop}
+                    />
+                    Auto loop bursts
+                  </label>
+                  <label className="size-control">
+                    <span>QR size boost</span>
+                    <input
+                      type="range"
+                      min="1"
+                      max="1.4"
+                      step="0.05"
+                      value={sizeMultiplier}
+                      onChange={handleSizeChange}
+                    />
+                    <span>{Math.round(sizeMultiplier * 100)}%</span>
+                  </label>
+                  <details>
+                    <summary>Payload preview</summary>
+                    <pre>{broadcast.payload_text}</pre>
+                  </details>
+                </div>
+
+                <div className="test-mode">
+                  <h3>Single-frame Test</h3>
+                  <p>
+                    Pin one frame so the receiver can test manual snapshots
+                    without worrying about burst cadence.
+                  </p>
+                  <div className="test-controls">
+                    <label>
+                      <span>Display frame</span>
+                      <select
+                        value={
+                          testFrameIndex !== null
+                            ? String(testFrameIndex)
+                            : "none"
+                        }
+                        onChange={handleTestFrameChange}
+                      >
+                        <option value="none">Live playback</option>
+                        {testOptions.map(({ index, label }) => (
+                          <option key={index} value={String(index)}>
+                            {label} · #{index + 1}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="link"
+                      onClick={handleCopyTestFrame}
+                      disabled={!displayFrame}
+                    >
+                      {testCopyState === "copied"
+                        ? "Copied!"
+                        : testCopyState === "error"
+                          ? "Copy failed"
+                          : "Copy QR text"}
+                    </button>
+                  </div>
+                  {isTestMode && displayFrame && (
+                    <div className="test-frame-preview">
+                      <div className="test-frame-label">
+                        Pinned value (frame #{displayFrameIndex + 1})
+                      </div>
+                      <pre>{displayFrame.qr_value}</pre>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
 
             {error && <div className="error-text">{error}</div>}
@@ -502,11 +657,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const [videoDiagnostics, setVideoDiagnostics] = useState<VideoDiagnostics>(
     () => createVideoDiagnostics(),
   );
+  const [manualDecodeStatus, setManualDecodeStatus] =
+    useState<ManualDecodeState>(createManualDecodeState);
   const [, forceDiagnosticUpdate] = useState(0);
   const lastValueRef = useRef<string | null>(null);
   const animationRef = useRef<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const manualCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const detectorRef = useRef<BarcodeDetectorLike | null>(null);
   const fallbackReaderRef = useRef<ZXingReader | null>(null);
@@ -521,7 +679,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     if (!video || !video.videoWidth || !video.videoHeight) {
       return;
     }
-    // Capture the observed camera resolution to validate device feed quality.
     const aspect =
       video.videoHeight > 0
         ? Math.round((video.videoWidth / video.videoHeight) * 1000) / 1000
@@ -531,7 +688,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       height: video.videoHeight,
       aspect,
     });
-  }, [setVideoDiagnostics]);
+  }, []);
   const computeLuminance = useCallback(() => {
     const video = videoRef.current;
     const canvas = sampleCanvasRef.current;
@@ -621,7 +778,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     if (cameraState !== "running") {
       return;
     }
-    // Refresh the diagnostics HUD while the camera is live.
     const timer = window.setInterval(() => {
       forceDiagnosticUpdate((prev) => (prev + 1) % Number.MAX_SAFE_INTEGER);
       updateVideoDiagnostics();
@@ -665,6 +821,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setCaptureMode("native");
       setFallbackStats(createFallbackStats());
       setVideoDiagnostics(createVideoDiagnostics());
+      setManualDecodeStatus(createManualDecodeState());
       setCameraErrorDetails(null);
       setCameraState("idle");
     },
@@ -855,11 +1012,124 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     animationRef.current = requestAnimationFrame(scanLoop);
   }, [processValue]);
 
+  const handleManualDecode = useCallback(async () => {
+    if (cameraState !== "running") {
+      setManualDecodeStatus({
+        status: "error",
+        message: "Camera is not active — start receiving first.",
+      });
+      return;
+    }
+    const video = videoRef.current;
+    const canvas = manualCanvasRef.current;
+    if (!video || !canvas || !video.videoWidth || !video.videoHeight) {
+      setManualDecodeStatus({
+        status: "error",
+        message: "Video frame unavailable for capture.",
+      });
+      return;
+    }
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) {
+      setManualDecodeStatus({
+        status: "error",
+        message: "Snapshot canvas is unavailable.",
+      });
+      return;
+    }
+
+    const captureWidth = Math.min(960, video.videoWidth);
+    const captureHeight = Math.max(
+      1,
+      Math.round((video.videoHeight / video.videoWidth) * captureWidth),
+    );
+    canvas.width = captureWidth;
+    canvas.height = captureHeight;
+    ctx.drawImage(video, 0, 0, captureWidth, captureHeight);
+
+    setManualDecodeStatus({
+      status: "pending",
+      message: "Decoding snapshot…",
+    });
+
+    try {
+      if (detectorRef.current && captureMode !== "fallback") {
+        const detections = await detectorRef.current.detect(canvas);
+        const first = detections[0];
+        if (first?.rawValue) {
+          await processValue(first.rawValue);
+          setManualDecodeStatus({
+            status: "success",
+            message: "Snapshot decoded successfully.",
+          });
+          return;
+        }
+        setManualDecodeStatus({
+          status: "error",
+          message: "No QR code found — adjust alignment and retry.",
+        });
+        return;
+      }
+
+      const module = await import("@zxing/browser");
+      const reader = new module.BrowserQRCodeReader();
+      try {
+        const result = await reader.decodeFromCanvas(canvas);
+        const text =
+          typeof result.getText === "function"
+            ? result.getText()
+            : ((result as unknown as { text?: string }).text ?? null);
+        if (text) {
+          await processValue(text);
+          setManualDecodeStatus({
+            status: "success",
+            message: "Snapshot decoded successfully.",
+          });
+        } else {
+          setManualDecodeStatus({
+            status: "error",
+            message: "No QR code found — adjust alignment and retry.",
+          });
+        }
+      } catch (err) {
+        if (
+          module.NotFoundException &&
+          err instanceof module.NotFoundException
+        ) {
+          setManualDecodeStatus({
+            status: "error",
+            message: "No QR code found — adjust alignment and retry.",
+          });
+        } else {
+          console.error("Manual decode failed", err);
+          setManualDecodeStatus({
+            status: "error",
+            message:
+              err instanceof Error ? err.message : "Manual decode failed.",
+          });
+        }
+      } finally {
+        try {
+          reader.reset();
+        } catch (resetErr) {
+          console.warn("Manual decode reader reset issue", resetErr);
+        }
+      }
+    } catch (err) {
+      console.error("Manual decode error", err);
+      setManualDecodeStatus({
+        status: "error",
+        message: err instanceof Error ? err.message : "Manual decode failed.",
+      });
+    }
+  }, [cameraState, captureMode, processValue]);
+
   const startCamera = useCallback(async () => {
     setCameraError(null);
     setCameraErrorDetails(null);
     setFallbackStats(createFallbackStats());
     setVideoDiagnostics(createVideoDiagnostics());
+    setManualDecodeStatus(createManualDecodeState());
     setCaptureMode("native");
     if (scannerSupported === false) {
       setCameraError("QR detection unavailable in this browser.");
@@ -1023,6 +1293,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     processValue,
     scanLoop,
     scannerSupported,
+    updateVideoDiagnostics,
   ]);
 
   const coveragePercent = status ? formatPercent(status.coverage) : "0.0%";
@@ -1190,6 +1461,25 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                 </>
               )}
             </div>
+            <div className="manual-decode">
+              <button
+                className="action secondary"
+                onClick={handleManualDecode}
+                disabled={cameraState !== "running"}
+              >
+                Snapshot Decode
+              </button>
+              <span
+                className={[
+                  "manual-status",
+                  `manual-status-${manualDecodeStatus.status}`,
+                ].join(" ")}
+              >
+                {manualDecodeStatus.status === "idle"
+                  ? "Capture a still frame to validate decoding."
+                  : (manualDecodeStatus.message ?? "Decoding snapshot…")}
+              </span>
+            </div>
             {cameraError && (
               <div className="error-text">
                 {cameraError}
@@ -1256,6 +1546,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                 muted
               />
               <canvas ref={sampleCanvasRef} className="capture-sample-canvas" />
+              <canvas ref={manualCanvasRef} className="capture-manual-canvas" />
               <div className="capture-overlay">
                 <div className="overlay-top">
                   <span
