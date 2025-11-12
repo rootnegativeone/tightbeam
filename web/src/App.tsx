@@ -275,6 +275,13 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     [],
   );
 
+  const stopPlaybackTimer = useCallback(() => {
+    if (playbackTimer.current !== null) {
+      window.clearInterval(playbackTimer.current);
+      playbackTimer.current = null;
+    }
+  }, []);
+
   const testOptions = useMemo(() => {
     if (!broadcast) {
       return [];
@@ -369,13 +376,6 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
       setIsPreparing(false);
     }
   }, [callPythonJson]);
-
-  const stopPlaybackTimer = useCallback(() => {
-    if (playbackTimer.current !== null) {
-      window.clearInterval(playbackTimer.current);
-      playbackTimer.current = null;
-    }
-  }, []);
 
   const handleStartBurst = useCallback(() => {
     if (!broadcast) {
