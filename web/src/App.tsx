@@ -867,14 +867,23 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     setLockState("acquiring");
     setLockProgress(0);
     setLockTarget(null);
-    setStatus(null);
-    setMetadata(null);
     lastSymbolTimestampRef.current = null;
     pendingMetadataRef.current = null;
   }, []);
 
   const handleMetadata = useCallback(
     async (meta: BroadcastMetadata) => {
+      const metadataUnchanged =
+        metadata &&
+        metadata.block_size === meta.block_size &&
+        metadata.k === meta.k &&
+        metadata.orig_len === meta.orig_len &&
+        metadata.integrity_check === meta.integrity_check;
+      if (metadataUnchanged && status) {
+        setMetadata(meta);
+        lastSymbolTimestampRef.current = Date.now();
+        return;
+      }
       const result = await callPythonJson(
         "reset_receiver",
         meta.block_size,
@@ -889,7 +898,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setStatus(null);
       lastSymbolTimestampRef.current = Date.now();
     },
-    [callPythonJson],
+    [callPythonJson, metadata, status],
   );
 
   const handleSync = useCallback(
@@ -938,7 +947,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       if (lastSymbol === null) {
         return;
       }
-      if (Date.now() - lastSymbol > 1500 && lockStateRef.current === "locked") {
+      if (Date.now() - lastSymbol > 3000 && lockStateRef.current === "locked") {
         requestResync();
       }
     }, 400);
