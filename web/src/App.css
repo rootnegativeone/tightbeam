@@ -444,10 +444,13 @@ body {
     color: #92f2c0;
 }
 
-.guidance p {
+.guidance-text {
     margin: 0;
     line-height: 1.55;
     color: #c2ead5;
+    min-height: 3.6rem;
+    display: flex;
+    align-items: center;
 }
 
 .camera-status {
