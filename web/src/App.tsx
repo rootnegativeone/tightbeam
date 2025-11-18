@@ -693,6 +693,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const fallbackNotFoundRef = useRef<ZXingNotFound | null>(null);
   const fallbackDecodeCancelRef = useRef<(() => void) | null>(null);
   const lockStateRef = useRef<LockState>("idle");
+  const lockProgressRef = useRef(0);
+  const metadataRef = useRef<BroadcastMetadata | null>(null);
+  const sessionInitializedRef = useRef(false);
   const pendingMetadataRef = useRef<BroadcastMetadata | null>(null);
   const syncSequencesRef = useRef<Set<number>>(new Set());
   const lastSymbolTimestampRef = useRef<number | null>(null);
@@ -782,6 +785,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   }, [lockState]);
 
   useEffect(() => {
+    lockProgressRef.current = lockProgress;
+  }, [lockProgress]);
+
+  useEffect(() => {
+    metadataRef.current = metadata;
+  }, [metadata]);
+
+  useEffect(() => {
     setGuidance(
       describeGuidance(status, metadata, lockState, lockProgress, lockTarget),
     );
@@ -833,6 +844,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       pendingMetadataRef.current = null;
       setLockState("idle");
       setLockProgress(0);
+      lockProgressRef.current = 0;
       setLockTarget(null);
       lastSymbolTimestampRef.current = null;
       if (!preservePayload) {
@@ -844,6 +856,10 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       setFallbackStats(createFallbackStats());
       setVideoDiagnostics(createVideoDiagnostics());
       setManualDecodeStatus(createManualDecodeState());
+      sessionInitializedRef.current = false;
+      metadataRef.current = null;
+      setMetadata(null);
+      setStatus(null);
       setCameraErrorDetails(null);
       setCameraState("idle");
     },
@@ -866,6 +882,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     syncSequencesRef.current.clear();
     setLockState("acquiring");
     setLockProgress(0);
+    lockProgressRef.current = 0;
     setLockTarget(null);
     lastSymbolTimestampRef.current = null;
     pendingMetadataRef.current = null;
@@ -873,17 +890,21 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
 
   const handleMetadata = useCallback(
     async (meta: BroadcastMetadata) => {
-      const metadataUnchanged =
-        metadata &&
-        metadata.block_size === meta.block_size &&
-        metadata.k === meta.k &&
-        metadata.orig_len === meta.orig_len &&
-        metadata.integrity_check === meta.integrity_check;
-      if (metadataUnchanged && status) {
+      const current = metadataRef.current;
+      const metadataChanged =
+        !current ||
+        current.block_size !== meta.block_size ||
+        current.k !== meta.k ||
+        current.orig_len !== meta.orig_len ||
+        current.integrity_check !== meta.integrity_check;
+
+      if (!metadataChanged && sessionInitializedRef.current) {
         setMetadata(meta);
+        metadataRef.current = meta;
         lastSymbolTimestampRef.current = Date.now();
         return;
       }
+
       const result = await callPythonJson(
         "reset_receiver",
         meta.block_size,
@@ -894,11 +915,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       if (result.error) {
         throw new Error(result.error);
       }
+
+      sessionInitializedRef.current = true;
       setMetadata(meta);
+      metadataRef.current = meta;
       setStatus(null);
       lastSymbolTimestampRef.current = Date.now();
     },
-    [callPythonJson, metadata, status],
+    [callPythonJson],
   );
 
   const handleSync = useCallback(
@@ -912,7 +936,11 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
 
       if (!syncSequencesRef.current.has(payload.sequence)) {
         syncSequencesRef.current.add(payload.sequence);
-        setLockProgress((prev) => Math.min(prev + 1, required));
+        setLockProgress((prev) => {
+          const next = Math.min(prev + 1, required);
+          lockProgressRef.current = next;
+          return next;
+        });
       }
 
       pendingMetadataRef.current = {
@@ -928,6 +956,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       ) {
         setLockState("locked");
         setLockProgress(required);
+        lockProgressRef.current = required;
         const meta = pendingMetadataRef.current;
         pendingMetadataRef.current = null;
         if (meta) {
@@ -947,7 +976,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       if (lastSymbol === null) {
         return;
       }
-      if (Date.now() - lastSymbol > 3000 && lockStateRef.current === "locked") {
+      if (Date.now() - lastSymbol > 4500 && lockStateRef.current === "locked") {
         requestResync();
       }
     }, 400);
@@ -992,15 +1021,18 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       if (value.startsWith("M:")) {
         const payload = value.slice(2);
         const meta = JSON.parse(payload) as BroadcastMetadata;
-        if (lockStateRef.current !== "locked") {
-          pendingMetadataRef.current = meta;
-          return;
-        }
+        pendingMetadataRef.current = meta;
         await handleMetadata(meta);
         return;
       }
 
-      if (!value.startsWith("S:") || lockStateRef.current !== "locked") {
+      const allowSymbols =
+        metadataRef.current &&
+        (lockStateRef.current === "locked" ||
+          (lockStateRef.current === "acquiring" &&
+            lockProgressRef.current > 0));
+
+      if (!value.startsWith("S:") || !allowSymbols) {
         return;
       }
       const remainder = value.slice(2);
@@ -1421,7 +1453,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         <div className="receiver-grid">
           <div className="guidance">
             <h3>Guidance</h3>
-            <p>{guidance}</p>
+            <div className="guidance-text">{guidance}</div>
             <div className="control-strip">
               <button
                 className="action"
