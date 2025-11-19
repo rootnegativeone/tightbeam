@@ -87,6 +87,7 @@ if "." not in sys.path:
 from simulation import (
     simulate_transfer,
     prepare_broadcast,
+    prepare_broadcast_from_base64,
     reset_receiver,
     receiver_add_symbol,
     receiver_status,

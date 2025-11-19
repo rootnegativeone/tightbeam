@@ -46,6 +46,8 @@ Open the printed URL (default `http://localhost:5173`). The hero screen lets you
 
 - By default the QR renderer uses a high-contrast profile (black modules on a white background) with error-correction level **H** and a quiet zone, which has proven the most reliable on iPhone Safari.
 - Use the **“Use brand palette”** checkbox to flip back to the mint-on-navy styling once you have lock stability.
+- Choose a payload source: keep the built-in POS logs, upload a local file (up to 512 KB), or paste raw text. Non-UTF8 files are previewed in base64 so you can confirm the payload before broadcasting.
+- Uploads show filename, size, and loading state; pastes display live character/byte counts and warn when you exceed the demo quota.
 - The **Single-frame Test** panel can pin a metadata/sync/symbol frame for manual capture or copy its payload onto the clipboard (helpful when debugging with static codes).
 - `Auto loop bursts` and the size slider let you tune cadence and apparent QR size without touching code.
 
