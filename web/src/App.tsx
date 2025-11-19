@@ -84,7 +84,10 @@ type BroadcastPackage = {
   systematic_count: number;
   redundant_count: number;
   sync: SyncConfig;
+  payload_is_base64?: boolean;
 };
+
+type PayloadSource = "sample" | "upload" | "paste";
 
 type MetricsSummary = {
   total_symbols: number;
@@ -185,6 +188,65 @@ const createManualDecodeState = (): ManualDecodeState => ({
 
 const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
+const formatBytes = (size: number) => {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  const units = ["KB", "MB", "GB"];
+  let unitIndex = -1;
+  let value = size;
+  do {
+    value /= 1024;
+    unitIndex += 1;
+  } while (value >= 1024 && unitIndex < units.length - 1);
+  return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unitIndex]}`;
+};
+
+const encodeTextToBase64 = (text: string) => {
+  if (typeof TextEncoder === "undefined") {
+    throw new Error("TextEncoder is unavailable");
+  }
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+};
+
+const measureUtf8Bytes = (text: string) => {
+  if (typeof TextEncoder === "undefined") {
+    throw new Error("TextEncoder is unavailable");
+  }
+  return new TextEncoder().encode(text).length;
+};
+
+const isDestroyable = (
+  value: unknown,
+): value is {
+  destroy: () => void;
+} => {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      "destroy" in (value as Record<string, unknown>) &&
+      typeof (value as { destroy?: unknown }).destroy === "function",
+  );
+};
+
+const formatPasteLabel = (text: string) => {
+  if (!text) {
+    return "Pasted payload";
+  }
+  return `Pasted payload (${text.length.toLocaleString()} chars)`;
+};
+
+const MAX_PAYLOAD_BYTES = 512 * 1024;
+const PAYLOAD_PREVIEW_LIMIT = 4096;
+
 const describeGuidance = (
   status: ReceiverStatus | null,
   metadata: BroadcastMetadata | null,
@@ -234,6 +296,17 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   );
   const [sizeMultiplier, setSizeMultiplier] = useState(1);
   const [useBrandPalette, setUseBrandPalette] = useState(false);
+  const [payloadSource, setPayloadSource] = useState<PayloadSource>("sample");
+  const [uploadFileName, setUploadFileName] = useState<string | null>(null);
+  const [uploadFileSize, setUploadFileSize] = useState<number | null>(null);
+  const [uploadBase64, setUploadBase64] = useState<string | null>(null);
+  const [isProcessingUpload, setIsProcessingUpload] = useState(false);
+  const [payloadInputError, setPayloadInputError] = useState<string | null>(
+    null,
+  );
+  const [payloadLabel, setPayloadLabel] = useState<string>("Sample logs");
+  const [pastedPayload, setPastedPayload] = useState<string>("");
+  const [pastedByteLength, setPastedByteLength] = useState(0);
   const [testFrameIndex, setTestFrameIndex] = useState<number | null>(null);
   const [testCopyState, setTestCopyState] = useState<
     "idle" | "copied" | "error"
@@ -254,6 +327,20 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
         : { bg: "#ffffff", fg: "#000000" },
     [useBrandPalette],
   );
+  const payloadPreview = useMemo(() => {
+    if (!broadcast) {
+      return "";
+    }
+    const text = broadcast.payload_text ?? "";
+    const truncated =
+      text.length > PAYLOAD_PREVIEW_LIMIT
+        ? `${text.slice(0, PAYLOAD_PREVIEW_LIMIT)}…`
+        : text;
+    if (broadcast.payload_is_base64) {
+      return `Base64 preview (first ${PAYLOAD_PREVIEW_LIMIT.toLocaleString()} chars)\n${truncated}`;
+    }
+    return truncated;
+  }, [broadcast]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -286,6 +373,102 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const handleToggleBrandPalette = useCallback(() => {
     setUseBrandPalette((prev) => !prev);
   }, []);
+
+  const handlePayloadSourceChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const value = event.target.value;
+      const next: PayloadSource =
+        value === "upload" ? "upload" : value === "paste" ? "paste" : "sample";
+      setPayloadSource(next);
+      setPayloadInputError(null);
+      if (next === "sample") {
+        setPayloadLabel("Sample logs");
+        return;
+      }
+      if (next === "upload") {
+        setPayloadLabel(uploadFileName ?? "Uploaded payload");
+        return;
+      }
+      setPayloadLabel(formatPasteLabel(pastedPayload));
+    },
+    [pastedPayload, uploadFileName],
+  );
+
+  const handleUploadChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] ?? null;
+      setPayloadInputError(null);
+      setUploadBase64(null);
+      setUploadFileName(file ? file.name : null);
+      setUploadFileSize(file ? file.size : null);
+      setIsProcessingUpload(false);
+
+      if (!file) {
+        if (payloadSource === "upload") {
+          setPayloadLabel("Uploaded payload");
+        }
+        return;
+      }
+
+      if (file.size > MAX_PAYLOAD_BYTES) {
+        setPayloadInputError(
+          `Payload too large for the demo (limit ${formatBytes(MAX_PAYLOAD_BYTES)}).`,
+        );
+        return;
+      }
+      setIsProcessingUpload(true);
+      setPayloadLabel(file.name);
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        setIsProcessingUpload(false);
+        const result = reader.result;
+        if (typeof result !== "string") {
+          setPayloadInputError("Unable to read file contents.");
+          return;
+        }
+        const base64 = result.split(",", 2)[1];
+        if (!base64) {
+          setPayloadInputError("File reader returned no data.");
+          return;
+        }
+        setUploadBase64(base64);
+      };
+      reader.onerror = () => {
+        setIsProcessingUpload(false);
+        setPayloadInputError("Unable to read selected file.");
+      };
+      reader.readAsDataURL(file);
+    },
+    [payloadSource],
+  );
+
+  const handlePasteChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      const value = event.target.value;
+      setPastedPayload(value);
+      setPayloadInputError(null);
+      let byteLength = 0;
+      if (value) {
+        try {
+          byteLength = measureUtf8Bytes(value);
+        } catch (err) {
+          console.warn("Unable to measure pasted payload size", err);
+          byteLength = value.length;
+        }
+      }
+      setPastedByteLength(byteLength);
+      if (payloadSource === "paste") {
+        setPayloadLabel(formatPasteLabel(value));
+      }
+      if (byteLength > MAX_PAYLOAD_BYTES) {
+        setPayloadInputError(
+          `Payload too large for the demo (limit ${formatBytes(MAX_PAYLOAD_BYTES)}).`,
+        );
+      }
+    },
+    [payloadSource],
+  );
 
   const stopPlaybackTimer = useCallback(() => {
     if (playbackTimer.current !== null) {
@@ -376,18 +559,83 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   const handlePrepare = useCallback(async () => {
     setIsPreparing(true);
     setError(null);
+    setPayloadInputError(null);
     try {
-      const result = await callPythonJson("prepare_broadcast");
+      let result: any;
+      if (payloadSource === "upload") {
+        if (isProcessingUpload) {
+          setPayloadInputError("Still processing selected file…");
+          return;
+        }
+        if (!uploadBase64) {
+          setPayloadInputError(
+            "Choose a payload file before preparing the burst.",
+          );
+          return;
+        }
+        result = await callPythonJson(
+          "prepare_broadcast_from_base64",
+          uploadBase64,
+        );
+      } else if (payloadSource === "paste") {
+        if (pastedPayload.trim().length === 0) {
+          setPayloadInputError("Paste log data before preparing the burst.");
+          return;
+        }
+        if (pastedByteLength > MAX_PAYLOAD_BYTES) {
+          setPayloadInputError(
+            `Payload too large for the demo (limit ${formatBytes(MAX_PAYLOAD_BYTES)}).`,
+          );
+          return;
+        }
+        let encoded = "";
+        try {
+          encoded = encodeTextToBase64(pastedPayload);
+        } catch (err) {
+          console.error(err);
+          setPayloadInputError("Unable to encode pasted payload.");
+          return;
+        }
+        result = await callPythonJson("prepare_broadcast_from_base64", encoded);
+      } else {
+        result = await callPythonJson("prepare_broadcast");
+      }
+
+      if (result && typeof result === "object" && "error" in result) {
+        const message = (result as { error: string }).error;
+        if (payloadSource === "sample") {
+          setError(message);
+        } else {
+          setPayloadInputError(message);
+        }
+        return;
+      }
+
       setBroadcast(result as BroadcastPackage);
       setPlaybackState("idle");
       setCurrentFrameIndex(0);
+      setPayloadLabel(
+        payloadSource === "sample"
+          ? "Sample logs"
+          : payloadSource === "upload"
+            ? (uploadFileName ?? "Uploaded payload")
+            : formatPasteLabel(pastedPayload),
+      );
     } catch (err) {
       console.error(err);
       setError("Unable to prepare broadcast. Retry in a moment.");
     } finally {
       setIsPreparing(false);
     }
-  }, [callPythonJson]);
+  }, [
+    callPythonJson,
+    payloadSource,
+    isProcessingUpload,
+    uploadBase64,
+    uploadFileName,
+    pastedPayload,
+    pastedByteLength,
+  ]);
 
   const handleStartBurst = useCallback(() => {
     if (!broadcast) {
@@ -515,7 +763,14 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
               <button
                 className="action"
                 onClick={handlePrepare}
-                disabled={isPreparing}
+                disabled={
+                  isPreparing ||
+                  (payloadSource === "upload" &&
+                    (isProcessingUpload || !uploadBase64)) ||
+                  (payloadSource === "paste" &&
+                    (pastedPayload.trim().length === 0 ||
+                      pastedByteLength > MAX_PAYLOAD_BYTES))
+                }
               >
                 {isPreparing ? "Preparing…" : "Prepare Broadcast"}
               </button>
@@ -534,11 +789,106 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
               </button>
             </div>
 
+            <div className="payload-source">
+              <h3>Payload Source</h3>
+              <div className="payload-options">
+                <label className="radio-option">
+                  <input
+                    type="radio"
+                    value="sample"
+                    checked={payloadSource === "sample"}
+                    onChange={handlePayloadSourceChange}
+                  />
+                  <span>Sample logs</span>
+                </label>
+                <label className="radio-option">
+                  <input
+                    type="radio"
+                    value="upload"
+                    checked={payloadSource === "upload"}
+                    onChange={handlePayloadSourceChange}
+                  />
+                  <span>Upload file</span>
+                </label>
+                <label className="radio-option">
+                  <input
+                    type="radio"
+                    value="paste"
+                    checked={payloadSource === "paste"}
+                    onChange={handlePayloadSourceChange}
+                  />
+                  <span>Paste text</span>
+                </label>
+              </div>
+              {payloadSource === "upload" && (
+                <div className="file-picker">
+                  <input
+                    type="file"
+                    onChange={handleUploadChange}
+                    aria-label="Choose payload file"
+                  />
+                  <div className="file-summary">
+                    {uploadFileName ? (
+                      <>
+                        <span>{uploadFileName}</span>
+                        {uploadFileSize !== null && (
+                          <span className="file-size">
+                            {formatBytes(uploadFileSize)}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span>Select a file to broadcast</span>
+                    )}
+                    {isProcessingUpload && (
+                      <span className="file-status">Loading…</span>
+                    )}
+                  </div>
+                  <div className="payload-limit">
+                    Demo limit {formatBytes(MAX_PAYLOAD_BYTES)} per burst.
+                  </div>
+                  {payloadInputError && (
+                    <div className="error-text">{payloadInputError}</div>
+                  )}
+                </div>
+              )}
+              {payloadSource === "paste" && (
+                <div className="paste-input">
+                  <textarea
+                    value={pastedPayload}
+                    onChange={handlePasteChange}
+                    placeholder="Paste logs or JSONL data here…"
+                    rows={8}
+                  />
+                  <div className="paste-meta">
+                    <span>{pastedPayload.length.toLocaleString()} chars</span>
+                    <span>
+                      {formatBytes(pastedByteLength)} /{" "}
+                      {formatBytes(MAX_PAYLOAD_BYTES)}
+                    </span>
+                  </div>
+                  {payloadInputError && (
+                    <div className="error-text">{payloadInputError}</div>
+                  )}
+                  <div className="paste-hint">
+                    Encoded as UTF-8 prior to broadcast · limit{" "}
+                    {formatBytes(MAX_PAYLOAD_BYTES)}.
+                  </div>
+                </div>
+              )}
+            </div>
+
             {broadcast && (
               <>
                 <div className="stats">
                   <h3>Transmission Stats</h3>
                   <ul>
+                    <li>
+                      Payload source: {payloadLabel}
+                      {payloadSource === "upload" && uploadFileSize !== null
+                        ? ` (${formatBytes(uploadFileSize)})`
+                        : ""}
+                    </li>
                     <li>
                       Frames: {broadcast.total_frames} (
                       {broadcast.systematic_count} systematic +{" "}
@@ -546,6 +896,13 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                     </li>
                     <li>Block size: {broadcast.metadata.block_size} bytes</li>
                     <li>Source blocks (k): {broadcast.metadata.k}</li>
+                    <li>Payload length: {broadcast.metadata.orig_len} bytes</li>
+                    <li>
+                      Preview mode:{" "}
+                      {broadcast.payload_is_base64
+                        ? "Binary (base64 preview)"
+                        : "UTF-8 text"}
+                    </li>
                     <li>
                       Sync preamble: {broadcast.sync.preamble_count} frames ·
                       reinserts every {broadcast.sync.interval} symbols
@@ -581,7 +938,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                   </label>
                   <details>
                     <summary>Payload preview</summary>
-                    <pre>{broadcast.payload_text}</pre>
+                    <pre>{payloadPreview || "(payload empty)"}</pre>
                   </details>
                 </div>
 
@@ -1703,15 +2060,34 @@ export default function App() {
     async (fnName, ...args) => {
       const pyodide = await ensurePyodide();
       const fn = pyodide.globals.get(fnName);
+      if (!fn) {
+        throw new Error(`Pyodide function "${fnName}" is unavailable`);
+      }
       try {
         const result = fn(...args);
         const text = typeof result === "string" ? result : result.toString();
-        if (result && typeof result === "object" && "destroy" in result) {
-          (result as unknown as { destroy: () => void }).destroy();
+        if (isDestroyable(result)) {
+          result.destroy();
         }
-        return JSON.parse(text);
+        try {
+          return JSON.parse(text);
+        } catch (err) {
+          throw new Error(
+            `Unable to parse response from "${fnName}": ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      } catch (err) {
+        throw new Error(
+          `Pyodide invocation failed for "${fnName}": ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
       } finally {
-        fn.destroy();
+        if (isDestroyable(fn)) {
+          fn.destroy();
+        }
       }
     },
     [],

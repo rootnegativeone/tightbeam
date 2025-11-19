@@ -294,6 +294,116 @@ body {
     gap: 0.8rem;
 }
 
+.payload-source {
+    background: rgba(8, 20, 13, 0.9);
+    border: 1px solid rgba(38, 118, 76, 0.35);
+    border-radius: 16px;
+    padding: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.payload-source h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #92f2c0;
+}
+
+.payload-options {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.radio-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.85rem;
+    color: #ccefdc;
+}
+
+.radio-option input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: #07c46c;
+}
+
+.file-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.file-picker input[type="file"] {
+    color: #bdf5d6;
+}
+
+.file-summary {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    font-size: 0.82rem;
+    color: rgba(189, 245, 214, 0.85);
+}
+
+.file-summary .file-size {
+    color: rgba(126, 247, 175, 0.85);
+}
+
+.file-summary .file-status {
+    color: #ffe38a;
+}
+
+.paste-input {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.paste-input textarea {
+    width: 100%;
+    min-height: 8rem;
+    resize: vertical;
+    background: rgba(5, 25, 16, 0.85);
+    border: 1px solid rgba(38, 118, 76, 0.45);
+    border-radius: 12px;
+    color: #dff9eb;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    padding: 0.65rem 0.75rem;
+    font-family:
+        "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.paste-input textarea::placeholder {
+    color: rgba(189, 245, 214, 0.6);
+}
+
+.paste-input textarea:focus {
+    outline: none;
+    border-color: rgba(126, 247, 175, 0.65);
+    box-shadow: 0 0 0 1px rgba(126, 247, 175, 0.25);
+}
+
+.paste-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.78rem;
+    color: rgba(126, 247, 175, 0.85);
+}
+
+.paste-hint {
+    font-size: 0.78rem;
+    color: rgba(197, 255, 225, 0.75);
+}
+
+.payload-limit {
+    font-size: 0.78rem;
+    color: rgba(197, 255, 225, 0.7);
+}
+
 .stats h3 {
     margin: 0;
     font-size: 1rem;

@@ -4,6 +4,7 @@ Pyodide entry point that mirrors the browser Send → Encode → Receive flow.
 
 from __future__ import annotations
 
+import base64
 import json
 import random
 from dataclasses import dataclass, field
@@ -84,12 +85,8 @@ def _encode_sync_frame(
     }
 
 
-def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
-    """
-    Create a broadcast package containing metadata and QR symbol frames.
-    """
+def _prepare_package(payload: bytes, seed: int = DEFAULT_SEED) -> Dict[str, object]:
     random.seed(seed)
-    payload = generate_sample_logs()
 
     metrics = FountainMetrics()
     encoder = LTEncoder(
@@ -154,9 +151,9 @@ def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
             append_sync()
             since_last_sync = 0
 
-    package = {
+    return {
         "seed": seed,
-        "payload_text": payload.decode("utf-8"),
+        "payload_text": _safe_decode_text(payload),
         "metadata": metadata,
         "frames": frames,
         "total_frames": len(frames),
@@ -168,7 +165,45 @@ def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
             "confirmation_required": SYNC_CONFIRMATION_REQUIRED,
         },
     }
+
+
+def _is_utf8(payload: bytes) -> bool:
+    try:
+        payload.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def _safe_decode_text(payload: bytes) -> str:
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError:
+        return base64.b64encode(payload).decode("ascii")
+
+
+def _render_package(package: Dict[str, object]) -> str:
     return json.dumps(package)
+
+
+def prepare_broadcast(seed: int = DEFAULT_SEED) -> str:
+    payload = generate_sample_logs()
+    package = _prepare_package(payload=payload, seed=seed)
+    return _render_package(package)
+
+
+def prepare_broadcast_from_base64(payload_b64: str, seed: int = DEFAULT_SEED) -> str:
+    try:
+        payload = base64.b64decode(payload_b64)
+    except (base64.binascii.Error, ValueError) as exc:
+        return json.dumps({"error": f"Invalid base64 payload: {exc}"})
+
+    if not payload:
+        return json.dumps({"error": "Payload is empty"})
+
+    package = _prepare_package(payload=payload, seed=seed)
+    package["payload_is_base64"] = not _is_utf8(payload)
+    return _render_package(package)
 
 
 @dataclass
