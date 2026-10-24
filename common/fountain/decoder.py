@@ -1,17 +1,20 @@
 """
-LT-style fountain decoder using bit-sliced Gaussian elimination over GF(2).
-Provides compatibility with systematic and redundant LT fountain streams.
+LT-style fountain decoder using incremental Gaussian elimination over GF(2).
+
+Each symbol's index set is held as an integer bitmask and its payload as a
+single big integer, so one XOR applies a row operation to every bit plane at
+once. Symbols are reduced against existing pivots on arrival, which keeps the
+rank exact at all times and makes the final solve a cheap back-substitution.
 """
 
 from __future__ import annotations
 
 import zlib
 from time import perf_counter
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..shared.metrics import FountainMetrics
 from ..shared.utils import combine_blocks
-from .matrix import solve_gf2
 
 
 class LTDecoder:
@@ -46,16 +49,32 @@ class LTDecoder:
         self.integrity_check = integrity_check
         self.tag_bytes = 4 if integrity_check else 0
         self.metrics = metrics
-        self.symbols: List[Tuple[List[int], bytes]] = []
+        # pivot column -> (row bitmask, payload int); the lowest set bit of
+        # each row mask is its pivot column.
+        self._pivots: Dict[int, Tuple[int, int]] = {}
+        self.symbols_received = 0
+        self.redundant_symbols = 0
+        self._result: Optional[bytes] = None
         self.last_pivots = 0
         self.last_rank = 0
 
+    @property
+    def rank(self) -> int:
+        """Number of linearly independent symbols collected so far."""
+        return len(self._pivots)
+
+    @property
+    def is_complete(self) -> bool:
+        return len(self._pivots) == self.k
+
     def add_symbol(self, idxs: int | Iterable[int], payload: bytes) -> bool:
-        """Add a received symbol, dropping it if integrity checks fail."""
-        if isinstance(idxs, int):
-            idx_list = [idxs]
-        else:
-            idx_list = list(idxs)
+        """
+        Add a received symbol, dropping it if integrity checks fail.
+
+        Returns True when the symbol passed integrity checks (whether or not it
+        increased the rank).
+        """
+        idx_list = [idxs] if isinstance(idxs, int) else list(idxs)
 
         payload_bytes = payload
         if self.tag_bytes:
@@ -72,8 +91,34 @@ class LTDecoder:
                 return False
             payload_bytes = data
 
-        self.symbols.append((idx_list, payload_bytes))
+        self.symbols_received += 1
+        if not self._reduce_and_insert(idx_list, payload_bytes):
+            self.redundant_symbols += 1
+        self.last_rank = self.last_pivots = len(self._pivots)
         return True
+
+    def _reduce_and_insert(self, idx_list: Sequence[int], payload: bytes) -> bool:
+        """Reduce a symbol against existing pivots; store it if innovative."""
+        if self.is_complete:
+            return False
+
+        mask = 0
+        for i in idx_list:
+            if not 0 <= i < self.k:
+                raise ValueError(f"symbol index {i} outside range 0..{self.k - 1}")
+            mask ^= 1 << i
+        value = int.from_bytes(payload, byteorder="big")
+
+        pivots = self._pivots
+        while mask:
+            col = (mask & -mask).bit_length() - 1
+            pivot = pivots.get(col)
+            if pivot is None:
+                pivots[col] = (mask, value)
+                return True
+            mask ^= pivot[0]
+            value ^= pivot[1]
+        return False
 
     def decode(self) -> bytes | None:
         """
@@ -81,126 +126,40 @@ class LTDecoder:
 
         Returns the recovered bytes or ``None`` if the system is underdetermined.
         """
-        if len(self.symbols) < self.k:
+        if self._result is not None:
+            return self._result
+
+        if self.symbols_received < self.k:
             return None
 
         start = perf_counter()
-        matrix = self._build_coefficient_matrix(self.symbols)
-        selection, pivots = self._select_independent_rows(matrix)
-        self.last_pivots = pivots
-        self.last_rank = pivots
-        if selection is None:
+        rank = len(self._pivots)
+        if rank < self.k:
             if self.metrics:
-                duration = perf_counter() - start
-                self.metrics.record_decode(duration, False, pivots, len(self.symbols))
+                self.metrics.record_decode(
+                    perf_counter() - start, False, rank, self.symbols_received
+                )
             return None
 
-        payload_ints = self._convert_payloads_to_ints(self.symbols)
-        matrix = [matrix[i] for i in selection]
-        payload_ints = [payload_ints[i] for i in selection]
-
-        solution = self._solve_bitwise(matrix, payload_ints)
-        duration = perf_counter() - start
-        success = solution is not None
-        if self.metrics:
-            symbols_used = len(selection) if success else pivots
-            self.metrics.record_decode(
-                duration, success, symbols_used, len(self.symbols)
-            )
-
-        if not success:
-            return None
+        # Every pivot row only has bits at or above its pivot column, so solving
+        # from the highest column down needs each referenced block already known.
+        solution = [0] * self.k
+        for col in range(self.k - 1, -1, -1):
+            mask, value = self._pivots[col]
+            mask ^= 1 << col
+            while mask:
+                low = mask & -mask
+                value ^= solution[low.bit_length() - 1]
+                mask ^= low
+            solution[col] = value
 
         blocks = self._convert_ints_to_blocks(solution)
-        return combine_blocks(blocks, self.orig_len)
-
-    def _build_coefficient_matrix(
-        self, symbols: Sequence[Tuple[Sequence[int], bytes]]
-    ) -> List[List[int]]:
-        """Create the GF(2) coefficient matrix from symbol indices."""
-        return [
-            [1 if col in idxs else 0 for col in range(self.k)] for (idxs, _) in symbols
-        ]
-
-    def _convert_payloads_to_ints(
-        self, symbols: Sequence[Tuple[Sequence[int], bytes]]
-    ) -> List[int]:
-        """Convert each symbol payload to an integer for bit slicing."""
-        return [int.from_bytes(payload, byteorder="big") for (_, payload) in symbols]
-
-    def _select_independent_rows(
-        self, matrix: List[List[int]]
-    ) -> Tuple[Optional[List[int]], int]:
-        """
-        Pick a subset of symbols that provides full rank.
-
-        Returns a tuple of (selection, pivots) where `selection` is a list of row
-        indices if full rank was achieved, otherwise ``None``. `pivots` counts the
-        number of independent rows discovered.
-        """
-        if not matrix:
-            return None, 0
-
-        m = len(matrix)
-        k = self.k
-        working = [row[:] for row in matrix]
-        row_indices = list(range(m))
-        pivot_row = 0
-
-        for col in range(k):
-            pivot = None
-            for r in range(pivot_row, m):
-                if working[r][col] == 1:
-                    pivot = r
-                    break
-
-            if pivot is None:
-                continue
-
-            if pivot != pivot_row:
-                working[pivot_row], working[pivot] = working[pivot], working[pivot_row]
-                row_indices[pivot_row], row_indices[pivot] = (
-                    row_indices[pivot],
-                    row_indices[pivot_row],
-                )
-
-            for r in range(pivot_row + 1, m):
-                if working[r][col] == 1:
-                    for c in range(col, k):
-                        working[r][c] ^= working[pivot_row][c]
-
-            pivot_row += 1
-            if pivot_row == k:
-                break
-
-        if pivot_row < k:
-            return None, pivot_row
-
-        return row_indices[:k], pivot_row
-
-    def _solve_bitwise(
-        self, matrix: List[List[int]], payload_ints: List[int]
-    ) -> List[int] | None:
-        """
-        Solve each bit plane independently using the GF(2) solver.
-
-        Returns the reconstructed block integers, or ``None`` if any bit-plane
-        is unsolvable (typically due to insufficient rank).
-        """
-        total_bits = self.block_size * 8
-        recovered = [0] * self.k
-
-        for bit in range(total_bits):
-            rhs = [(value >> bit) & 1 for value in payload_ints]
-            solution_bits = solve_gf2(matrix, rhs)
-            if solution_bits is None:
-                return None
-
-            for idx, bit_value in enumerate(solution_bits):
-                if bit_value:
-                    recovered[idx] |= 1 << bit
-
-        return recovered
+        self._result = combine_blocks(blocks, self.orig_len)
+        if self.metrics:
+            self.metrics.record_decode(
+                perf_counter() - start, True, self.k, self.symbols_received
+            )
+        return self._result
 
     def _convert_ints_to_blocks(self, values: Sequence[int]) -> List[bytes]:
         """Convert integer block representations back to fixed-size byte blocks."""

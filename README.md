@@ -10,12 +10,12 @@ Tightbeam is a burst-erasure-resilient, air-gapped data transfer system using QR
 
 ## Components
 
-- `common/`: Shared fountain code primitives, metrics, and utilities.
-- `decoder/`: Python receiver-side rebuild helpers.
-- `demo/`: Standalone scripts for generating QR bursts from sample data.
-- `web/`: Vite + React simulation (sender + receiver UIs) loading the Python stack through Pyodide.
+- `common/`: Shared fountain code primitives (LT encoder, incremental GF(2) decoder), metrics, and utilities. Pure stdlib Python.
+- `decoder/`: Compatibility re-export of `LTDecoder`.
+- `web/`: Vite + React simulation (sender + receiver UIs) loading the Python stack through Pyodide. `web/public/python/common/` is generated from `common/` by `npm run sync-python`, which runs automatically before `dev` and `build`.
+- `scripts/`: Benchmarks and the end-to-end demo completion check.
 - `tests/`: Unit and integration coverage.
-- `logs/`: Generated telemetry during local experiments.
+- `docs/`: Design and performance notes.
 
 ## Goals
 
@@ -77,7 +77,8 @@ Vercel deployments use the Vite production output under `web/dist`.
 ## Testing
 
 - `npm run build` in `web/` — validates the React + Pyodide bundle.
-- Python unit tests live under `tests/` and can be executed with `pytest`.
+- Python unit tests live under `tests/` and can be executed with `pytest` (`pip install -r requirements-dev.txt`).
+- `python scripts/demo_assert_complete.py` — simulates the 10KB demo broadcast end to end.
 
 ## Status
 

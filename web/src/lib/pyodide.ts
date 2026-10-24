@@ -23,7 +23,6 @@ const PYTHON_FILES = [
   "common/fountain/__init__.py",
   "common/fountain/encoder.py",
   "common/fountain/decoder.py",
-  "common/fountain/matrix.py",
   "common/fountain/sim.py",
   "common/shared/__init__.py",
   "common/shared/demo_payloads.py",

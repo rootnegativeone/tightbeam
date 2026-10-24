@@ -1,5 +1,0 @@
-opencv-python
-qrcode
-Pillow
-numpy
-imageio

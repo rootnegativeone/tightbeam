@@ -22,6 +22,8 @@ web/dist/
 web/*.zip
 web/*.log
 web/.DS_Store
+# Generated from common/ by web/scripts/sync-python.mjs
+web/public/python/common/
 
 # Editor
 .idea/

@@ -1,4 +1,3 @@
-# File: utilities/fountain/encoder.py
 """
 LT-style fountain encoder with robust soliton distribution and optional systematic output.
 """
@@ -25,7 +24,9 @@ class LTEncoder:
         *,
         integrity_check: bool = False,
         metrics: Optional[FountainMetrics] = None,
+        rng: Optional[random.Random] = None,
     ):
+        self.rng = rng if rng is not None else random.Random()
         self.orig_len = len(data)
         self.blocks = split_blocks(data, block_size)
         self.k = len(self.blocks)
@@ -85,7 +86,7 @@ class LTEncoder:
         if self.k <= 1:
             return 1
 
-        r = random.random()
+        r = self.rng.random()
         for idx, cutoff in enumerate(self._cdf, start=1):
             if r <= cutoff:
                 return idx
@@ -101,19 +102,19 @@ class LTEncoder:
                 self.generated = i + 1
             yield ([i], payload)
 
-    def encode_symbol(self) -> tuple[int, bytes]:
+    def encode_symbol(self) -> tuple[list[int], bytes]:
         # Optionally emit systematic block first
         if self.systematic and self.generated < self.k:
             block = self.blocks[self.generated]
             payload = self._apply_integrity(block)
             if self.metrics:
                 self.metrics.record_degree(1)
-            symbol = (self.generated, payload)
+            symbol = ([self.generated], payload)
             self.generated += 1
             return symbol
         # Otherwise random combination
         d = self._robust_soliton()
-        idxs = random.sample(range(self.k), d)
+        idxs = self.rng.sample(range(self.k), d)
         payload_bytes = bytearray(self.blocks[idxs[0]])
         for i in idxs[1:]:
             block = self.blocks[i]
@@ -121,9 +122,9 @@ class LTEncoder:
         payload = self._apply_integrity(bytes(payload_bytes))
         if self.metrics:
             self.metrics.record_degree(len(idxs))
-        return (tuple(idxs), payload)
+        return (idxs, payload)
 
-    def encode(self, n: int) -> list[tuple]:
+    def encode(self, n: int) -> list[tuple[list[int], bytes]]:
         return [self.encode_symbol() for _ in range(n)]
 
     def _apply_integrity(self, payload: bytes) -> bytes:

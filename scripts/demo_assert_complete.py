@@ -5,8 +5,10 @@ import sys
 def load_simulation():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     sim_path = os.path.join(repo_root, "web", "public", "python")
-    if sim_path not in sys.path:
-        sys.path.insert(0, sim_path)
+    # simulation.py imports `common`, which lives at the repo root.
+    for path in (repo_root, sim_path):
+        if path not in sys.path:
+            sys.path.insert(0, path)
     import simulation as sim  # type: ignore
 
     return sim
