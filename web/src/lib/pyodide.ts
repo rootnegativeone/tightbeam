@@ -4,6 +4,7 @@ type PyodideInstance = {
     writeFile: (path: string, data: string, opts: { encoding: string }) => void;
   };
   runPythonAsync: (code: string) => Promise<any>;
+  globals: { get: (name: string) => any };
 };
 
 type LoadPyodideFn = (options: {

@@ -91,6 +91,8 @@ type BroadcastPackage = {
 
 type PayloadSource = "sample" | "upload" | "paste";
 
+type EccLevel = "L" | "M" | "Q" | "H";
+
 type MetricsSummary = {
   total_symbols: number;
   degree_hist: Record<string, number>;
@@ -156,16 +158,9 @@ type BarcodeDetectorCtor = new (options?: {
   formats?: string[];
 }) => BarcodeDetectorLike;
 
-type ZXingReader = {
-  decodeFromVideoDevice: (
-    deviceId: string | undefined,
-    videoElement: HTMLVideoElement,
-    callback: (result: { getText(): string } | null, err: unknown) => void,
-  ) => Promise<void>;
-  reset: () => void;
-};
+type ZXingReader = import("@zxing/browser").BrowserQRCodeReader;
 
-type ZXingNotFound = new (...args: any[]) => Error;
+type ZXingNotFound = typeof import("@zxing/library").NotFoundException;
 
 type FallbackStats = {
   detections: number;
@@ -349,6 +344,9 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
   );
   const [sizeMultiplier, setSizeMultiplier] = useState(1);
   const [useBrandPalette, setUseBrandPalette] = useState(false);
+  // Fountain coding + per-symbol CRC already absorb lost/corrupt frames, so a
+  // lower QR ECC level trades per-frame robustness for bigger modules.
+  const [eccLevel, setEccLevel] = useState<EccLevel>("H");
   const [payloadSource, setPayloadSource] = useState<PayloadSource>("sample");
   const [uploadFileName, setUploadFileName] = useState<string | null>(null);
   const [uploadFileSize, setUploadFileSize] = useState<number | null>(null);
@@ -836,7 +834,7 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                 bgColor={qrColors.bg}
                 fgColor={qrColors.fg}
                 includeMargin
-                level="H"
+                level={eccLevel}
               />
             ) : (
               <div className="placeholder">
@@ -1066,6 +1064,20 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                     />
                     Use accent palette
                   </label>
+                  <label className="size-control">
+                    <span>QR error correction</span>
+                    <select
+                      value={eccLevel}
+                      onChange={(event) =>
+                        setEccLevel(event.target.value as EccLevel)
+                      }
+                    >
+                      <option value="H">H (30%, default)</option>
+                      <option value="Q">Q (25%)</option>
+                      <option value="M">M (15%)</option>
+                      <option value="L">L (7%)</option>
+                    </select>
+                  </label>
                   <details>
                     <summary>Payload preview</summary>
                     <pre>{payloadPreview || "(payload empty)"}</pre>
@@ -1244,9 +1256,12 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   const ensureFallbackReader = useCallback(async () => {
     try {
       if (!fallbackReaderRef.current) {
-        const module = await import("@zxing/browser");
-        fallbackReaderRef.current = new module.BrowserQRCodeReader();
-        fallbackNotFoundRef.current = module.NotFoundException;
+        const [browser, library] = await Promise.all([
+          import("@zxing/browser"),
+          import("@zxing/library"),
+        ]);
+        fallbackReaderRef.current = new browser.BrowserQRCodeReader();
+        fallbackNotFoundRef.current = library.NotFoundException;
       }
       return true;
     } catch (err) {
@@ -1624,10 +1639,13 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         return;
       }
 
-      const module = await import("@zxing/browser");
-      const reader = new module.BrowserQRCodeReader();
+      const [browser, library] = await Promise.all([
+        import("@zxing/browser"),
+        import("@zxing/library"),
+      ]);
+      const reader = new browser.BrowserQRCodeReader();
       try {
-        const result = await reader.decodeFromCanvas(canvas);
+        const result = reader.decodeFromCanvas(canvas);
         const text =
           typeof result.getText === "function"
             ? result.getText()
@@ -1645,10 +1663,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
           });
         }
       } catch (err) {
-        if (
-          module.NotFoundException &&
-          err instanceof module.NotFoundException
-        ) {
+        if (err instanceof library.NotFoundException) {
           setManualDecodeStatus({
             status: "error",
             message: "No QR code found — adjust alignment and retry.",
@@ -1660,12 +1675,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
             message:
               err instanceof Error ? err.message : "Manual decode failed.",
           });
-        }
-      } finally {
-        try {
-          reader.reset();
-        } catch (resetErr) {
-          console.warn("Manual decode reader reset issue", resetErr);
         }
       }
     } catch (err) {
@@ -1760,22 +1769,6 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
           throw new Error("Fallback scanner unavailable");
         }
         const reader = fallbackReaderRef.current;
-        fallbackDecodeCancelRef.current = () => {
-          try {
-            reader.reset();
-          } catch (err) {
-            console.warn("Fallback reader reset issue", err);
-          }
-        };
-        const continuousReader = reader as {
-          decodeFromVideoElementContinuously?: (
-            element: HTMLVideoElement,
-            callback: (
-              result: { getText(): string } | null,
-              error: unknown,
-            ) => Promise<void>,
-          ) => void;
-        };
         const fallbackCallback = async (
           result: { getText(): string } | null,
           err: unknown,
@@ -1819,13 +1812,19 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         };
 
         setCaptureMode("fallback");
-        if (continuousReader.decodeFromVideoElementContinuously) {
-          continuousReader.decodeFromVideoElementContinuously(
-            video,
-            fallbackCallback,
-          );
+        // Decode from the stream already attached to <video> (the selected
+        // camera) and keep the returned controls so Stop actually halts it.
+        const controls = await reader.decodeFromVideoElement(
+          video,
+          (result, err) => {
+            void fallbackCallback(result ?? null, err);
+          },
+        );
+        if (video.srcObject === null) {
+          // Stop was pressed while the scanner was starting.
+          controls.stop();
         } else {
-          reader.decodeFromVideoDevice(undefined, video, fallbackCallback);
+          fallbackDecodeCancelRef.current = () => controls.stop();
         }
       } else {
         animationRef.current = requestAnimationFrame(scanLoop);
@@ -2031,7 +2030,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                     ? "Starting…"
                     : "Begin Reconstruction"}
               </button>
-              <button className="action secondary" onClick={stopCamera}>
+              <button className="action secondary" onClick={() => stopCamera()}>
                 Stop
               </button>
               <button
