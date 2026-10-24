@@ -5,31 +5,33 @@ Pyodide entry point that mirrors the browser Send → Encode → Receive flow.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import random
+import zlib
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional
 
 from sim_payload import generate_sample_logs
 
 from common.fountain.decoder import LTDecoder
 from common.fountain.encoder import LTEncoder
+from common.fountain.schedule import symbol_indices
+from common.shared.base45 import b45decode, b45encode
 from common.shared.metrics import FountainMetrics
 
-DEFAULT_BLOCK_SIZE = 96
+FRAME_VERSION = 2
+# 224-byte blocks + 4-byte CRC -> 342 Base45 chars; with the S: header the frame
+# is ~359 alphanumeric chars, which fits QR version 16 at ECC-H (the same
+# version v1 redundant frames already used, carrying 2.3x the data).
+DEFAULT_BLOCK_SIZE = 224
 DEFAULT_REDUNDANCY = 4
 DEFAULT_SEED = 1337
 
 SYNC_PREAMBLE_COUNT = 6
 SYNC_INSERT_INTERVAL = 8
 SYNC_CONFIRMATION_REQUIRED = 4
-
-
-def _normalize_indices(idxs: int | Iterable[int]) -> List[int]:
-    if isinstance(idxs, int):
-        return [idxs]
-    return list(idxs)
 
 
 def _encode_metadata_frame(
@@ -43,25 +45,45 @@ def _encode_metadata_frame(
     }
 
 
+def _session_tag(session_seed: int) -> str:
+    return f"{session_seed & 0xFFFFFFFF:08X}"
+
+
 def _encode_symbol_frame(
     sequence: int,
+    session_seed: int,
+    esi: int,
     idx_list: List[int],
     payload: bytes,
     *,
     systematic: bool,
 ) -> Dict[str, object]:
-    payload_hex = payload.hex()
-    indices_part = ",".join(str(i) for i in idx_list)
-    qr_value = f"S:{sequence}|{indices_part}|{payload_hex}"
+    # Every character is in the QR alphanumeric set (Base45 payload last, so
+    # its ':' and ' ' characters never collide with the header separators).
+    qr_value = f"S:{_session_tag(session_seed)}:{esi}:{b45encode(payload)}"
     return {
         "sequence": sequence,
         "type": "symbol",
+        "esi": esi,
         "indices": idx_list,
         "degree": len(idx_list),
-        "payload_hex": payload_hex,
         "systematic": systematic,
         "qr_value": qr_value,
     }
+
+
+def parse_symbol_frame(value: str) -> Optional[tuple[str, int, bytes]]:
+    """Split an ``S:`` frame into (session tag, esi, payload); None if malformed."""
+    if not value.startswith("S:"):
+        return None
+    parts = value[2:].split(":", 2)
+    if len(parts) != 3 or not parts[1].isdigit():
+        return None
+    try:
+        payload = b45decode(parts[2])
+    except ValueError:
+        return None
+    return parts[0], int(parts[1]), payload
 
 
 def _encode_sync_frame(
@@ -71,11 +93,7 @@ def _encode_sync_frame(
         "sequence": sequence,
         "ordinal": ordinal,
         "total": total,
-        "block_size": metadata["block_size"],
-        "k": metadata["k"],
-        "orig_len": metadata["orig_len"],
-        "integrity_check": metadata["integrity_check"],
-        "session_id": metadata["session_id"],
+        **metadata,
         "confirmation_required": SYNC_CONFIRMATION_REQUIRED,
     }
     return {
@@ -89,34 +107,37 @@ def _encode_sync_frame(
 
 
 def _prepare_package(payload: bytes, seed: int = DEFAULT_SEED) -> Dict[str, object]:
-    rng = random.Random(seed)
+    session_seed = random.Random(seed).getrandbits(32)
+
+    compressed = zlib.compress(payload, 9)
+    if len(compressed) < len(payload):
+        codec, wire = "deflate", compressed
+    else:
+        codec, wire = "none", payload
 
     metrics = FountainMetrics()
     encoder = LTEncoder(
-        data=payload,
+        data=wire,
         block_size=DEFAULT_BLOCK_SIZE,
         systematic=True,
+        seed=session_seed,
         integrity_check=True,
         metrics=metrics,
-        rng=rng,
     )
+    k = encoder.k
+    systematic_count = k
+    redundant_count = k + DEFAULT_REDUNDANCY
 
-    systematic_symbols = [
-        (idxs, payload) for idxs, payload in encoder.emit_systematic()
-    ]
-    redundant_symbols = [
-        (idxs, payload)
-        for idxs, payload in encoder.encode(len(encoder.blocks) + DEFAULT_REDUNDANCY)
-    ]
-    all_symbols = systematic_symbols + redundant_symbols
-
-    session_id = f"TB-{rng.getrandbits(32):08X}"
     metadata = {
+        "v": FRAME_VERSION,
         "block_size": DEFAULT_BLOCK_SIZE,
-        "k": len(encoder.blocks),
-        "orig_len": len(payload),
+        "k": k,
+        "orig_len": len(wire),
         "integrity_check": True,
-        "session_id": session_id,
+        "session_id": f"TB-{_session_tag(session_seed)}",
+        "codec": codec,
+        "raw_len": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest()[:16],
     }
 
     frames: List[Dict[str, object]] = []
@@ -145,14 +166,16 @@ def _prepare_package(payload: bytes, seed: int = DEFAULT_SEED) -> Dict[str, obje
     sequence += 1
 
     since_last_sync = 0
-    for offset, (idxs, payload_bytes) in enumerate(all_symbols):
-        idx_list = _normalize_indices(idxs)
+    for esi in range(systematic_count + redundant_count):
+        idx_list, payload_bytes = encoder.symbol(esi)
         frames.append(
             _encode_symbol_frame(
                 sequence=sequence,
+                session_seed=session_seed,
+                esi=esi,
                 idx_list=idx_list,
                 payload=payload_bytes,
-                systematic=offset < len(systematic_symbols),
+                systematic=esi < k,
             )
         )
         sequence += 1
@@ -168,8 +191,8 @@ def _prepare_package(payload: bytes, seed: int = DEFAULT_SEED) -> Dict[str, obje
         "metadata": metadata,
         "frames": frames,
         "total_frames": len(frames),
-        "systematic_count": len(systematic_symbols),
-        "redundant_count": len(redundant_symbols),
+        "systematic_count": systematic_count,
+        "redundant_count": redundant_count,
         "sync": {
             "preamble_count": SYNC_PREAMBLE_COUNT,
             "interval": SYNC_INSERT_INTERVAL,
@@ -223,11 +246,18 @@ class ReceiverSession:
     k: int
     orig_len: int
     integrity_check: bool
+    session_id: str
+    codec: str = "none"
+    raw_len: Optional[int] = None
+    sha256: Optional[str] = None
     decoder: LTDecoder = field(init=False)
     metrics: FountainMetrics = field(init=False)
-    sequences_seen: set[int] = field(default_factory=set)
+    session_tag: str = field(init=False)
+    session_seed: int = field(init=False)
+    esis_seen: set[int] = field(default_factory=set)
     unique_indices: set[int] = field(default_factory=set)
     recovered_text: Optional[str] = None
+    recovered_is_base64: bool = False
     accepted_symbols: int = 0
     last_decode_attempt: float = 0.0
     last_decode_duration: float = 0.0
@@ -257,22 +287,43 @@ class ReceiverSession:
             integrity_check=self.integrity_check,
             metrics=self.metrics,
         )
+        self.session_tag = self.session_id.removeprefix("TB-").upper()
+        self.session_seed = int(self.session_tag, 16)
         self.start_time = perf_counter()
         self.phase_started_at = self.start_time
 
-    def add_symbol(
-        self, sequence: int, indices: List[int], payload_hex: str
-    ) -> Dict[str, object]:
+    @classmethod
+    def from_metadata(cls, meta: Dict[str, object]) -> "ReceiverSession":
+        return cls(
+            block_size=int(meta["block_size"]),  # type: ignore[call-overload]
+            k=int(meta["k"]),  # type: ignore[call-overload]
+            orig_len=int(meta["orig_len"]),  # type: ignore[call-overload]
+            integrity_check=bool(meta.get("integrity_check", True)),
+            session_id=str(meta["session_id"]),
+            codec=str(meta.get("codec", "none")),
+            raw_len=meta.get("raw_len"),  # type: ignore[arg-type]
+            sha256=meta.get("sha256"),  # type: ignore[arg-type]
+        )
+
+    def add_frame(self, value: str) -> Dict[str, object]:
         now = perf_counter()
-        if sequence in self.sequences_seen:
+        parsed = parse_symbol_frame(value)
+        if parsed is None:
+            self.metrics.record_symbol_rejected("malformed_frame")
+            return self._status_dict(redundant=False, newly_added=False)
+        tag, esi, payload = parsed
+        if tag != self.session_tag:
+            self.metrics.record_symbol_rejected("session_mismatch")
+            return self._status_dict(redundant=False, newly_added=False)
+        if esi in self.esis_seen:
             return self._status_dict(redundant=True, newly_added=False)
 
-        payload = bytes.fromhex(payload_hex)
+        indices = symbol_indices(self.session_seed, esi, self.k)
         accepted = self.decoder.add_symbol(indices, payload)
         if not accepted:
             return self._status_dict(redundant=False, newly_added=False)
 
-        self.sequences_seen.add(sequence)
+        self.esis_seen.add(esi)
         self.unique_indices.update(indices)
         self.accepted_symbols += 1
 
@@ -290,7 +341,7 @@ class ReceiverSession:
         return {
             "redundant": redundant,
             "newly_added": newly_added,
-            "symbols_observed": len(self.sequences_seen),
+            "symbols_observed": len(self.esis_seen),
             "unique_symbols": len(self.unique_indices),
             "accepted_symbols_total": self.accepted_symbols,
             "accepted_unique_symbols": len(self.unique_indices),
@@ -300,6 +351,9 @@ class ReceiverSession:
             "coverage": coverage,
             "decode_complete": self.recovered_text is not None,
             "recovered_text": self.recovered_text,
+            "recovered_is_base64": self.recovered_is_base64,
+            "codec": self.codec,
+            "raw_len": self.raw_len,
             "phase": self.phase,
             "last_decode_attempt_ms": (
                 round((self.last_decode_attempt - self.start_time) * 1000, 1)
@@ -373,7 +427,12 @@ class ReceiverSession:
             self.finalize_status = "in_progress"
             self.finalize_started_at = perf_counter()
         try:
-            self.recovered_text = recovered.decode("utf-8")
+            raw = self._unwrap(recovered)
+            try:
+                self.recovered_text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                self.recovered_text = base64.b64encode(raw).decode("ascii")
+                self.recovered_is_base64 = True
             self.finalize_status = "done"
             self._set_phase("done")
         except Exception as exc:
@@ -381,31 +440,46 @@ class ReceiverSession:
             self.finalize_error = str(exc)
             self._set_phase("error")
 
+    def _unwrap(self, recovered: bytes) -> bytes:
+        """Undo transport compression and verify the whole-payload digest."""
+        if self.codec == "deflate":
+            raw = zlib.decompress(recovered)
+        elif self.codec == "none":
+            raw = recovered
+        else:
+            raise ValueError(f"unsupported codec {self.codec!r}")
+        if self.raw_len is not None and len(raw) != self.raw_len:
+            raise ValueError(f"length mismatch: {len(raw)} != {self.raw_len}")
+        if self.sha256 and hashlib.sha256(raw).hexdigest()[:16] != self.sha256:
+            raise ValueError("sha256 mismatch")
+        return raw
+
 
 _active_session: Optional[ReceiverSession] = None
 
 
-def reset_receiver(
-    block_size: int, k: int, orig_len: int, integrity_check: bool = True
-) -> str:
-    """Initialise a fresh receiver session with supplied metadata."""
+def reset_receiver(metadata_json: str) -> str:
+    """Initialise a fresh receiver session from a sync/metadata frame's JSON."""
     global _active_session
-    _active_session = ReceiverSession(
-        block_size=block_size,
-        k=k,
-        orig_len=orig_len,
-        integrity_check=integrity_check,
+    try:
+        meta = json.loads(metadata_json)
+    except ValueError as exc:
+        return json.dumps({"error": f"invalid metadata: {exc}"})
+    if meta.get("v") != FRAME_VERSION:
+        return json.dumps(
+            {"error": f"unsupported frame version {meta.get('v')!r}; reload sender"}
+        )
+    _active_session = ReceiverSession.from_metadata(meta)
+    return json.dumps(
+        {"status": "ready", "block_size": meta["block_size"], "k": meta["k"]}
     )
-    return json.dumps({"status": "ready", "block_size": block_size, "k": k})
 
 
-def receiver_add_symbol(sequence: int, indices: List[int], payload_hex: str) -> str:
-    """Forward a decoded symbol from the browser receiver into the fountain decoder."""
+def receiver_add_frame(value: str) -> str:
+    """Forward a scanned ``S:`` frame from the browser into the fountain decoder."""
     if _active_session is None:
         return json.dumps({"error": "receiver_not_initialised"})
-
-    status = _active_session.add_symbol(sequence, indices, payload_hex)
-    return json.dumps(status)
+    return json.dumps(_active_session.add_frame(value))
 
 
 def receiver_status() -> str:
@@ -422,24 +496,16 @@ def simulate_transfer(seed: int = DEFAULT_SEED) -> str:
     package = json.loads(prepare_broadcast(seed))
     metadata = package["metadata"]
 
-    reset_receiver(
-        block_size=metadata["block_size"],
-        k=metadata["k"],
-        orig_len=metadata["orig_len"],
-        integrity_check=metadata.get("integrity_check", True),
-    )
+    reset_receiver(json.dumps(metadata))
 
     timeline = []
     for frame in package["frames"]:
         if frame["type"] != "symbol":
             continue
-        sequence = frame["sequence"]
-        indices = frame["indices"]
-        payload_hex = frame["payload_hex"]
-        status = json.loads(receiver_add_symbol(sequence, indices, payload_hex))
+        status = json.loads(receiver_add_frame(frame["qr_value"]))
         timeline.append(
             {
-                "sequence": sequence,
+                "sequence": frame["sequence"],
                 "coverage": status["coverage"],
                 "decode_complete": status["decode_complete"],
             }

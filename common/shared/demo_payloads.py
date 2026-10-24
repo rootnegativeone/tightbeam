@@ -4,6 +4,8 @@ Deterministic payload generators shared across tests and web simulations.
 
 from __future__ import annotations
 
+import json
+import random
 from typing import Iterable, Mapping, Sequence
 
 
@@ -83,4 +85,48 @@ def generate_pos_terminal_logs(
     return "\n".join(lines).encode("utf-8")
 
 
-__all__ = ["generate_pos_terminal_logs"]
+_BULK_EVENTS = (
+    "sale_approved",
+    "sale_declined",
+    "card_read",
+    "inventory_sync",
+    "heartbeat",
+    "printer_status",
+    "settlement_batch",
+)
+
+
+def generate_bulk_pos_logs(target_bytes: int, seed: int = 1337) -> bytes:
+    """
+    Return deterministic JSON-lines POS logs of roughly ``target_bytes``.
+
+    Includes high-entropy fields (transaction ids, amounts, latencies) so the
+    compression ratio resembles a real merchant log pull (~8x with deflate)
+    rather than a trivially repetitive payload.
+    """
+    rng = random.Random(seed)
+    lines: list[str] = []
+    size = 0
+    ts = 1_729_600_000
+    while size < target_bytes:
+        ts += rng.randint(1, 40)
+        line = json.dumps(
+            {
+                "ts": ts,
+                "terminal": f"TB-POS-{rng.randint(1, 4):02d}",
+                "event": rng.choice(_BULK_EVENTS),
+                "txn_id": f"{rng.getrandbits(64):016x}",
+                "amount": f"{rng.uniform(1, 200):.2f}",
+                "currency": "USD",
+                "method": rng.choice(("tap", "chip", "swipe")),
+                "latency_ms": rng.randint(80, 900),
+                "fw": "4.2.17",
+            },
+            separators=(",", ":"),
+        )
+        lines.append(line)
+        size += len(line) + 1
+    return "\n".join(lines).encode("utf-8")[:target_bytes]
+
+
+__all__ = ["generate_bulk_pos_logs", "generate_pos_terminal_logs"]

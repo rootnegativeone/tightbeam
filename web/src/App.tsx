@@ -21,11 +21,16 @@ declare global {
 }
 
 type BroadcastMetadata = {
+  v: number;
   block_size: number;
   k: number;
+  /** Length of the bytes on the wire (after compression). */
   orig_len: number;
   integrity_check: boolean;
   session_id: string;
+  codec: "deflate" | "none";
+  raw_len: number;
+  sha256: string;
 };
 
 type BroadcastFrameMeta = {
@@ -35,15 +40,10 @@ type BroadcastFrameMeta = {
   qr_value: string;
 };
 
-type SyncPayload = {
+type SyncPayload = BroadcastMetadata & {
   sequence: number;
   ordinal: number;
   total: number;
-  block_size: number;
-  k: number;
-  orig_len: number;
-  integrity_check: boolean;
-  session_id: string;
   confirmation_required: number;
 };
 
@@ -59,9 +59,9 @@ type BroadcastFrameSync = {
 type BroadcastFrameSymbol = {
   sequence: number;
   type: "symbol";
+  esi: number;
   indices: number[];
   degree: number;
-  payload_hex: string;
   systematic: boolean;
   qr_value: string;
 };
@@ -115,6 +115,9 @@ type ReceiverStatus = {
   coverage: number;
   decode_complete: boolean;
   recovered_text: string | null;
+  recovered_is_base64: boolean;
+  codec: string;
+  raw_len: number | null;
   phase: "collecting" | "solving" | "finalizing" | "done" | "error";
   last_decode_attempt_ms: number | null;
   last_decode_attempt_age_ms: number | null;
@@ -772,11 +775,11 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
     [broadcast],
   );
   const senderPayloadSize = broadcast
-    ? formatBytes(broadcast.metadata.orig_len)
+    ? formatBytes(broadcast.metadata.raw_len)
     : "—";
   const senderIntegrityStatus = broadcast
-    ? "Signed Payload · Reconstruction Verification Pending"
-    : "Signed Payload · Awaiting Session";
+    ? `SHA-256 ${broadcast.metadata.sha256}… · Receiver Verification Pending`
+    : "Awaiting Session";
 
   return (
     <section className="panel">
@@ -859,7 +862,10 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
               )}
               {displayFrame?.type === "symbol" && (
                 <div>
-                  d{displayFrame.degree} · {displayFrame.indices.join(", ")}
+                  #{displayFrame.esi} · d{displayFrame.degree} ·{" "}
+                  {displayFrame.indices.length > 6
+                    ? `${displayFrame.indices.slice(0, 6).join(", ")}, …`
+                    : displayFrame.indices.join(", ")}
                 </div>
               )}
               {displayFrame?.type === "meta" && broadcast && (
@@ -1009,7 +1015,18 @@ const SenderView = ({ callPythonJson, onBack }: SenderViewProps) => {
                     </li>
                     <li>Block size: {broadcast.metadata.block_size} bytes</li>
                     <li>Source blocks (k): {broadcast.metadata.k}</li>
-                    <li>Payload length: {broadcast.metadata.orig_len} bytes</li>
+                    <li>
+                      Payload: {broadcast.metadata.raw_len} bytes →{" "}
+                      {broadcast.metadata.orig_len} on the wire (
+                      {broadcast.metadata.codec === "deflate"
+                        ? `deflate, ${(
+                            broadcast.metadata.raw_len /
+                            Math.max(broadcast.metadata.orig_len, 1)
+                          ).toFixed(1)}× smaller`
+                        : "uncompressed"}
+                      )
+                    </li>
+                    <li>SHA-256 (prefix): {broadcast.metadata.sha256}</li>
                     <li>
                       Preview mode:{" "}
                       {broadcast.payload_is_base64
@@ -1368,11 +1385,15 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       const current = metadataRef.current;
       const metadataChanged =
         !current ||
+        current.v !== meta.v ||
         current.block_size !== meta.block_size ||
         current.k !== meta.k ||
         current.orig_len !== meta.orig_len ||
         current.integrity_check !== meta.integrity_check ||
-        current.session_id !== meta.session_id;
+        current.session_id !== meta.session_id ||
+        current.codec !== meta.codec ||
+        current.raw_len !== meta.raw_len ||
+        current.sha256 !== meta.sha256;
 
       if (!metadataChanged && sessionInitializedRef.current) {
         setMetadata(meta);
@@ -1383,10 +1404,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
 
       const result = await callPythonJson(
         "reset_receiver",
-        meta.block_size,
-        meta.k,
-        meta.orig_len,
-        meta.integrity_check,
+        JSON.stringify(meta),
       );
       if (result.error) {
         throw new Error(result.error);
@@ -1419,13 +1437,14 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
         });
       }
 
-      pendingMetadataRef.current = {
-        block_size: payload.block_size,
-        k: payload.k,
-        orig_len: payload.orig_len,
-        integrity_check: payload.integrity_check,
-        session_id: payload.session_id,
-      };
+      const {
+        sequence: _sequence,
+        ordinal: _ordinal,
+        total: _total,
+        confirmation_required: _required,
+        ...meta
+      } = payload;
+      pendingMetadataRef.current = meta;
 
       if (
         syncSequencesRef.current.size >= required &&
@@ -1461,13 +1480,10 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
   }, [cameraState, requestResync]);
 
   const handleSymbol = useCallback(
-    async (sequence: number, indices: number[], payloadHex: string) => {
-      const result = await callPythonJson(
-        "receiver_add_symbol",
-        sequence,
-        indices,
-        payloadHex,
-      );
+    async (frame: string) => {
+      // Python parses the frame (session tag, esi, Base45 payload) and derives
+      // the symbol's block indices from the session seed.
+      const result = await callPythonJson("receiver_add_frame", frame);
       if (result.error) {
         throw new Error(result.error);
       }
@@ -1517,24 +1533,7 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
       if (!value.startsWith("S:") || !allowSymbols) {
         return;
       }
-      const remainder = value.slice(2);
-      const [sequencePart, indicesPart, payloadHex] = remainder.split("|", 3);
-      if (!sequencePart || !indicesPart || !payloadHex) {
-        return;
-      }
-      const sequence = Number.parseInt(sequencePart, 10);
-      if (Number.isNaN(sequence)) {
-        return;
-      }
-      const indices = indicesPart
-        .split(",")
-        .filter(Boolean)
-        .map((item) => Number.parseInt(item, 10))
-        .filter((item) => !Number.isNaN(item));
-      if (!indices.length) {
-        return;
-      }
-      await handleSymbol(sequence, indices, payloadHex);
+      await handleSymbol(value);
     },
     [handleMetadata, handleSymbol, handleSync],
   );
@@ -1949,10 +1948,13 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
     () => formatSessionId(metadata),
     [metadata],
   );
-  const receiverPayloadSize = metadata ? formatBytes(metadata.orig_len) : "—";
+  const receiverPayloadSize = metadata ? formatBytes(metadata.raw_len) : "—";
+  // Finalize only succeeds when length and SHA-256 prefix match the sender's.
   const receiverIntegrityStatus = status?.decode_complete
-    ? "Reconstruction Verified — Integrity Confirmed"
-    : "Signed Payload · Reconstruction Verification Pending";
+    ? `Reconstructed · SHA-256 ${metadata?.sha256 ?? ""}… Verified`
+    : status?.phase === "error"
+      ? `Integrity Check Failed${status.finalize_error ? ` — ${status.finalize_error}` : ""}`
+      : "Reconstruction Verification Pending";
   const receiverPhaseLabel = status
     ? status.phase === "solving"
       ? "Solving"
@@ -2250,6 +2252,9 @@ const ReceiverView = ({ callPythonJson, onBack }: ReceiverViewProps) => {
                         : "Copy"}
                   </button>
                 </div>
+                {status?.recovered_is_base64 && (
+                  <div className="payload-note">Binary payload (base64)</div>
+                )}
                 <pre>
                   {recoveredPayload
                     ? recoveredPayload
