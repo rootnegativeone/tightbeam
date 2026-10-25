@@ -4,13 +4,13 @@ Tightbeam moves data over a one-way optical link: a sender displays a looping st
 
 ## Layout
 - `common/`: **source of truth** for the Python core (encoder, incremental GF(2) decoder, metrics). Stdlib only, no third-party deps.
-- `web/`: Vite + React app (`web/src/App.tsx`) that runs the Python core in-browser via Pyodide (`web/src/lib/pyodide.ts`).
+- `web/`: Vite + React app that runs the Python core in-browser via Pyodide (`web/src/lib/pyodide.ts`).
   - `web/public/python/simulation.py` and `sim_payload.py`: Pyodide entry points (sender package builder + `ReceiverSession`).
   - `web/public/python/common/` is **generated** (gitignored) by `npm run sync-python`. Never edit it; edit `common/` instead.
   - When you add a Python module, also add it to `PYTHON_FILES` in `web/src/lib/pyodide.ts`.
 - `decoder/reassembler.py`: compatibility re-export of `LTDecoder`.
 - `scripts/`: `demo_assert_complete.py` (10KB end-to-end check), `demo_benchmark.py` (v2 transfer times by size/loss), `bench_schedule.py`, `bench_channel.py`.
-- `docs/`: design and performance notes.
+- `docs/`: design and performance notes; `field_test_plan.md` is the phone test protocol.
 
 ## Commands
 ```bash
@@ -26,12 +26,16 @@ CI (`.github/workflows/ci.yml`) runs all of the above plus the web build.
 Vercel deploys `web/` to https://tightbeam.vercel.app. The build reads `../common` via `sync-python`, so the Vercel project must keep "Include files outside the root directory" enabled.
 
 ## Wire format v2 (encoder and receiver must change together)
-Full spec: `docs/wire_format_v2.md`.
-- `Y:{json}`: sync frame (metadata, repeated as a preamble and every 8 frames)
-- `M:{json}`: metadata (`v`, `block_size`, `k`, `orig_len` = wire bytes, `session_id`, `codec`, `raw_len`, `sha256` prefix)
-- `S:{SESSION}:{ESI}:{base45(block + crc32)}`: symbol frame. All QR-alphanumeric characters. No index list; both sides derive indices with `common/fountain/schedule.symbol_indices(seed, esi, k)`.
-Producer: `simulation._prepare_package`. Consumer: `App.tsx` `processValue` → `handleSymbol` → `receiver_add_frame` (parsing happens in Python).
-`tests/test_schedule.py` pins the golden schedule values; changing them is a wire-format break.
+Full spec: `docs/wire_format_v2.md`. Every frame is QR-alphanumeric.
+- `Y:2:{SESSION}:{k}:…:{ordinal}/{total}`: compact sync/metadata frame (`simulation.encode_sync_frame` / `parse_sync_frame`).
+- `S:{SESSION}:{ESI}:{base45(block + crc32)}`: symbol frame with no index list. Both sides derive indices with `common/fountain/schedule.symbol_indices(seed, esi, k)`.
+- The sender pins every frame to one QR version (`web/src/lib/qr.ts` `commonVersion`), so keep sync frames smaller than symbol frames.
+Golden schedule values are pinned in `tests/test_schedule.py`; changing them is a wire-format break.
+
+## Web UI
+- `web/src/sender/SenderView.tsx`; `web/src/receiver/` (`useScanner` = camera/QR detection, `useTransfer` = lock + session, `report.ts` = test report).
+- Receiver layout rule: the camera viewfinder is first and has a fixed aspect ratio. Never render content above it that changes height while scanning.
+- Routes: `#send`, `#receive`. The sender shows a QR code of `…/#receive` so a phone opens straight to the receiver.
 
 ## Conventions
 - Never use the module-global `random`. The encoder is deterministic given `seed`; anything else random takes a `random.Random` instance.

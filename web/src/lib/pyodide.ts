@@ -87,12 +87,12 @@ import sys
 if "." not in sys.path:
     sys.path.append("/")
 from simulation import (
-    simulate_transfer,
     prepare_broadcast,
     prepare_broadcast_from_base64,
+    receiver_parse_sync,
     reset_receiver,
     receiver_add_frame,
-    receiver_status,
+    receiver_payload,
 )
 `.trim(),
   );

@@ -55,6 +55,10 @@ class LTDecoder:
         self.symbols_received = 0
         self.redundant_symbols = 0
         self._result: Optional[bytes] = None
+        # Column pinned down by the most recent symbol, or None if it added no
+        # rank. Repair symbols always pivot on a column no earlier symbol
+        # covered, so this shows which "gap" a symbol filled.
+        self.last_pivot_col: Optional[int] = None
         self.last_pivots = 0
         self.last_rank = 0
 
@@ -92,15 +96,18 @@ class LTDecoder:
             payload_bytes = data
 
         self.symbols_received += 1
-        if not self._reduce_and_insert(idx_list, payload_bytes):
+        self.last_pivot_col = self._reduce_and_insert(idx_list, payload_bytes)
+        if self.last_pivot_col is None:
             self.redundant_symbols += 1
         self.last_rank = self.last_pivots = len(self._pivots)
         return True
 
-    def _reduce_and_insert(self, idx_list: Sequence[int], payload: bytes) -> bool:
-        """Reduce a symbol against existing pivots; store it if innovative."""
+    def _reduce_and_insert(
+        self, idx_list: Sequence[int], payload: bytes
+    ) -> Optional[int]:
+        """Reduce a symbol against existing pivots; return its new pivot column."""
         if self.is_complete:
-            return False
+            return None
 
         mask = 0
         for i in idx_list:
@@ -115,10 +122,10 @@ class LTDecoder:
             pivot = pivots.get(col)
             if pivot is None:
                 pivots[col] = (mask, value)
-                return True
+                return col
             mask ^= pivot[0]
             value ^= pivot[1]
-        return False
+        return None
 
     def decode(self) -> bytes | None:
         """

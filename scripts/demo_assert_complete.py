@@ -28,7 +28,7 @@ def main():
             continue
         status = session.add_frame(frame["qr_value"])
         if status.get("decode_complete"):
-            if status["recovered_text"].encode("utf-8") != payload:
+            if session.recovered_text.encode("utf-8") != payload:
                 print("FAIL: recovered payload differs from original")
                 return 1
             print("OK: reconstruction completed")

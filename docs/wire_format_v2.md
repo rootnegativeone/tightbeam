@@ -4,26 +4,29 @@ v2 replaces the v1 frame format (`S:{seq}|{i,j,...}|{hex}`). Sender and receiver
 
 ## Frames
 
-| Prefix | Body | QR mode |
-|---|---|---|
-| `Y:` | sync JSON: metadata plus `sequence`, `ordinal`, `total`, `confirmation_required` | byte |
-| `M:` | metadata JSON | byte |
-| `S:` | `{SESSION}:{ESI}:{BASE45}` | **alphanumeric** |
+Every frame uses only the QR alphanumeric character set.
 
-Metadata fields:
+| Prefix | Body |
+|---|---|
+| `Y:` | sync: `{v}:{SESSION}:{k}:{block}:{wire_len}:{raw_len}:{codec}:{SHA16}:{ecc}:{interval_ms}:{frames_per_loop}:{symbols_per_loop}:{ordinal}/{total}` |
+| `S:` | symbol: `{SESSION}:{ESI}:{BASE45}` |
 
-- `v` = 2.
-- `block_size`, `k`.
-- `orig_len`: length of the bytes on the wire, after compression.
-- `integrity_check`.
-- `session_id` = `TB-{SESSION}`.
-- `codec`: `deflate` or `none`.
-- `raw_len`.
-- `sha256`: first 16 hex characters of the SHA-256 of the raw payload.
+The sync frame is the session metadata. It is sent 6 times as a preamble and then once every 8 symbols, and it is small (around QR version 6). The sender renders **every** frame at the symbol frames' QR version, so module size never changes while the stream plays. Earlier drafts used a JSON `M:` frame and JSON sync frames. Those were removed because they required a larger QR version than the symbols, which made the code visibly resize.
 
-Symbol frame fields:
+Sync fields:
 
-- `SESSION`: 8 uppercase hex characters. This is the 32-bit session seed. A receiver drops symbols whose tag doesn't match its session.
+- `v`: 2.
+- `SESSION`: 8 uppercase hex characters, the 32-bit seed. The session id is `TB-{SESSION}`.
+- `k`, `block`: the number of source blocks and the block size in bytes.
+- `wire_len`: bytes after compression. `raw_len`: original bytes.
+- `codec`: `D` for deflate, `N` for none.
+- `SHA16`: the first 16 hex characters of the raw payload's SHA-256.
+- `ecc`, `interval_ms`, `frames_per_loop`, `symbols_per_loop`: sender settings. They don't affect decoding. They exist so receiver test reports are self-labeled and capture rate can be computed.
+- `ordinal/total`: position in the 6-frame sync cycle. Locking requires 4 distinct ordinals.
+
+Symbol fields:
+
+- `SESSION`: as above. A receiver drops symbols whose session doesn't match its own.
 - `ESI`: the encoding symbol id, in decimal.
 - `BASE45`: RFC 9285 encoding of `block ‖ crc32(block)`. It is the last field, so its own `:` and space characters can't collide with the separators.
 
