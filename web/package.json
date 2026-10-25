@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "sync-python": "node scripts/sync-python.mjs",
+    "predev": "npm run sync-python",
     "dev": "vite",
+    "prebuild": "npm run sync-python",
     "build": "vite build",
     "preview": "vite preview"
   },

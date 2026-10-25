@@ -53,6 +53,7 @@ def test_web_simulation_end_to_end():
         systematic=True,
         integrity_check=True,
         metrics=metrics,
+        rng=random.Random(1337),
     )
 
     systematic_symbols = list(encoder.emit_systematic())

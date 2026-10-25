@@ -2,6 +2,7 @@ import pytest
 from common.fountain.encoder import LTEncoder
 from decoder.reassembler import LTDecoder
 
+
 def test_systematic_roundtrip():
     data = b"HELLO FOUNTAIN"
     block_size = 4
