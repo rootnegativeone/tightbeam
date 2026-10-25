@@ -21,7 +21,6 @@ def run_benchmark(
     payload: bytes,
     loss_rate: float,
     seed: int = 1337,
-    frame_interval: float = 0.45,
     max_loops: int = 5,
 ):
     """
@@ -31,6 +30,7 @@ def run_benchmark(
     rng = random.Random(seed)
     package = sim._prepare_package(payload, seed=seed)
     metadata = package["metadata"]
+    frame_interval = metadata["frame_interval_ms"] / 1000
     session = sim.ReceiverSession.from_metadata(metadata)
 
     simulated_time = 0.0

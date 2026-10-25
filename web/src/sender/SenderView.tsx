@@ -17,23 +17,27 @@ const SAMPLE_SIZES = [
   { kb: 100, label: "100 KB" },
   { kb: 500, label: "500 KB" },
 ] as const;
+// QR versions are at ECC M; at H each size needs a larger (denser) code.
 const BLOCK_SIZES = [
-  { value: 224, label: "224 bytes — most data per frame" },
+  { value: 416, label: "416 bytes — most data (QR v16)" },
+  { value: 304, label: "304 bytes (QR v13)" },
+  { value: 224, label: "224 bytes — default (QR v11)" },
   { value: 160, label: "160 bytes" },
-  { value: 96, label: "96 bytes — largest, easiest to scan" },
+  { value: 96, label: "96 bytes — easiest to scan" },
 ] as const;
 const FRAME_SPEEDS = [
-  { value: 300, label: "Fast (3.3 frames/s)" },
+  { value: 300, label: "Fast (3.3 frames/s) — default" },
   { value: 450, label: "Normal (2.2 frames/s)" },
   { value: 600, label: "Slow (1.7 frames/s)" },
 ] as const;
 const ECC_LEVELS: { value: EccLevel; label: string }[] = [
-  { value: "H", label: "H — most robust" },
+  { value: "M", label: "M — default" },
   { value: "Q", label: "Q" },
-  { value: "M", label: "M — bigger modules" },
+  { value: "H", label: "H — most robust, densest" },
   { value: "L", label: "L — biggest modules" },
 ];
-const ASSUMED_LOSS = 0.15;
+// iPhone field tests caught ~100% of frames; leave a little margin.
+const ASSUMED_LOSS = 0.05;
 
 type Source = "sample" | "file" | "paste";
 type Phase = "setup" | "preparing" | "sending";
@@ -65,9 +69,9 @@ export const SenderView = ({ call }: Props) => {
   const [sampleKb, setSampleKb] = useState<number>(100);
   const [file, setFile] = useState<File | null>(null);
   const [pasted, setPasted] = useState("");
-  const [ecc, setEcc] = useState<EccLevel>("H");
+  const [ecc, setEcc] = useState<EccLevel>("M");
   const [blockSize, setBlockSize] = useState(224);
-  const [intervalMs, setIntervalMs] = useState(450);
+  const [intervalMs, setIntervalMs] = useState(300);
   const [boost, setBoost] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [broadcast, setBroadcast] = useState<BroadcastPackage | null>(null);

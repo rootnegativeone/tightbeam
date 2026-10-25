@@ -8,6 +8,9 @@ import os
 import random
 import sys
 
+import pytest
+import segno
+
 _SIM_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "web", "public", "python")
 )
@@ -167,3 +170,34 @@ def test_parse_symbol_frame_handles_base45_separators():
     assert (tag, esi, data) == ("0000ABCD", 42, payload)
     assert sim.parse_symbol_frame("S:0000ABCD:x:00") is None
     assert sim.parse_symbol_frame("M:{}") is None
+
+
+@pytest.mark.parametrize(
+    "block_size, ecc, max_version",
+    [(224, "M", 11), (304, "M", 13), (416, "M", 16), (224, "H", 16), (96, "H", 10)],
+)
+def test_block_sizes_fit_their_intended_qr_version(block_size, ecc, max_version):
+    # Guards the sender's QR size: frames (incl. a 5-digit esi) and sync frames
+    # must fit the version each block size was chosen for.
+    payload = generate_bulk_pos_logs(100 * 1024)
+    package = sim._prepare_package(payload, seed=6, block_size=block_size, ecc=ecc)
+    _, tag, _, body = package["frames"][-1]["qr_value"].split(":", 3)
+    widest = f"S:{tag}:99999:{body}"
+    sync = package["frames"][0]["qr_value"]
+    for value in (widest, sync):
+        version = segno.make(value, error=ecc.lower(), boost_error=False).version
+        assert version <= max_version, (value[:20], version)
+
+    session = sim.ReceiverSession.from_metadata(package["metadata"])
+    status = _feed(session, package["frames"], loss=0.1)
+    assert status["decode_complete"]
+    assert session.recovered_text.encode() == payload
+
+
+def test_defaults_match_field_tested_settings():
+    meta = sim._prepare_package(b"defaults " * 100)["metadata"]
+    assert (meta["ecc"], meta["frame_interval_ms"], meta["block_size"]) == (
+        "M",
+        300,
+        224,
+    )

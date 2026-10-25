@@ -19,21 +19,19 @@ If a run stalls for more than a minute, tap **Pause** and copy the report anyway
 
 ## Runs
 
+The baseline is already measured: 500 KB at the defaults (ECC M, 224 B, Fast) took 106 s with every frame caught. The open question is how much data per frame the phone can handle.
+
 | # | Payload | Advanced | Question it answers |
 |---|---|---|---|
-| 1 | POS logs, 10 KB | defaults | Does everything work end to end? |
-| 2 | POS logs, 100 KB | defaults (ECC H) | Baseline for the realistic size |
-| 3 | POS logs, 100 KB | ECC **M** | Do bigger modules capture better? |
-| 4 | POS logs, 100 KB | defaults (ECC H) | Repeat of run 2, to see how much runs vary |
-| 5 | POS logs, 100 KB | ECC **M** | Repeat of run 3 |
-| 6 | POS logs, 500 KB | whichever of H or M did better | The "real log pull" number |
+| 1 | POS logs, 500 KB | Data per frame **416 B**, Frame speed **Normal** | Can the phone read the densest code (v16) reliably? Estimate ~85 s |
+| 2 | POS logs, 500 KB | Data per frame **416 B**, Fast (default) | The fastest setting. Estimate ~57 s if capture holds |
+| 3 | POS logs, 500 KB | Data per frame **304 B**, Fast (default) | The middle option, if run 2 drops many frames. Estimate ~78 s |
 
-Optional, if you have time: repeat run 6 with **Frame speed: Fast**.
+Keep ECC at M (the default) for all three.
 
 ## What happens with the reports
 
 Paste all the reports back in one message. Each one says how long the receive took, what share of the frames the phone caught (capture rate), whether any frames were corrupt, and the settings, so nothing needs annotating. We then decide:
 
-- **ECC default:** switch to M if its capture rate and time are at least as good as H.
-- **Frame speed:** go faster if capture stays above about 85% at Fast.
-- **Data per frame:** if capture is comfortably high, test larger blocks next.
+- **Default data per frame:** whichever of runs 1–3 has the lowest total time (lock plus receiving). Dropped frames only cost time, never correctness, so the fastest finish wins.
+- **Is 300 ms still right:** if run 2's capture falls well below 90%, try 416 B at Normal speed as the default instead.

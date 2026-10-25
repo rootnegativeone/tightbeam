@@ -25,12 +25,14 @@ from common.shared.demo_payloads import generate_bulk_pos_logs
 from common.shared.metrics import FountainMetrics
 
 FRAME_VERSION = 2
-# 224-byte blocks + 4-byte CRC -> 342 Base45 chars; with the S: header the frame
-# is ~359 alphanumeric chars, which fits QR version 16 at ECC-H.
+# Block size -> QR version (the frame is Base45 of block + 4-byte CRC plus a
+# ~17-char header): 224 B fits v11 at ECC-M / v16 at ECC-H; 304 B fits v13 at M;
+# 416 B fits v16 at M. Field tests (iPhone, zxing-cpp) read every frame at
+# ECC M / 300 ms with zero corrupt frames, so M and 300 ms are the defaults.
 DEFAULT_BLOCK_SIZE = 224
-ALLOWED_BLOCK_SIZES = (96, 160, 224)
-DEFAULT_ECC = "H"
-DEFAULT_FRAME_INTERVAL_MS = 450
+ALLOWED_BLOCK_SIZES = (96, 160, 224, 304, 416)
+DEFAULT_ECC = "M"
+DEFAULT_FRAME_INTERVAL_MS = 300
 DEFAULT_REDUNDANCY = 4
 DEFAULT_SEED = 1337
 

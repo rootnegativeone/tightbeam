@@ -49,7 +49,15 @@ Why this shape:
 
 ## Sizing
 
-The default block is 224 bytes. With the CRC that is 228 bytes, or 342 Base45 characters. Adding the header gives a frame of about 359 alphanumeric characters, which fits **QR version 16 at ECC-H**. That's the same version v1's redundant frames used, but each frame now carries 2.3× the data. A 96-byte block would fit version 10 if capture needs bigger modules.
+The frame is Base45 of `block ‖ crc32` plus a header of about 17 characters. Block size determines the QR version:
+
+| Block | ECC M | ECC H |
+|---|---|---|
+| 224 B (default) | v11 | v16 |
+| 304 B | v13 | — |
+| 416 B | v16 | — |
+
+`tests/test_wire_v2.py` checks that each size still fits its version, including a 5-digit ESI and the sync frame. The sender pins every frame in a session to one version.
 
 ## Measured (`scripts/demo_benchmark.py`, 450 ms per frame, sync overhead included)
 
@@ -61,7 +69,17 @@ Payloads are synthetic JSON-lines POS logs (`generate_bulk_pos_logs`); deflate s
 | 100 KB | 829 s (13.8 min) | 39 s | 45 s |
 | 500 KB | 4324 s (72 min) | 188 s (3.1 min) | 222 s |
 
+## Field results (iPhone, iOS Chrome, 500 KB of POS logs, 70 KB on the wire)
+
+| Decoder | ECC | Block | Interval | Lock | Capture | Receiving |
+|---|---|---|---|---|---|---|
+| ZXing JS | H | 224 | 450 ms | 21.8 s | 58% | 273 s |
+| zxing-cpp WASM | H | 224 | 450 ms | 3.9 s | 100% | 158 s |
+| zxing-cpp WASM | M | 224 | 300 ms | 3.2 s | 100% | 106 s |
+
+None of these runs had a corrupt frame. At 300 ms the phone read each frame exactly once, with no repeats. Its throughput is about 3 decodes per second, so further gains must come from more data per frame (larger blocks at ECC M), not from faster frames. Defaults are now ECC M, 300 ms, 224 B blocks.
+
 ## Not yet tuned
 
-- **QR ECC level.** H spends about 30% of each code on error correction. The fountain code plus the per-symbol CRC already handle lost or corrupted frames, so M or L could carry about 1.6–2× more per frame. This needs an iPhone capture test with blur and glare first.
+- **Block size.** 416 B at ECC M (QR v16) carries 1.86× the data per frame. Whether the phone can still decode v16 codes at about 3 per second is the open question; see `docs/field_test_plan.md`.
 - **Sync cadence.** One sync frame every 8 is about 11% airtime. Every symbol frame now carries the session tag, so sync frames could be sent less often.
