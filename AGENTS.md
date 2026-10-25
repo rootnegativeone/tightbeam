@@ -42,5 +42,7 @@ Golden schedule values are pinned in `tests/test_schedule.py`; changing them is 
 - Keep the `LTDecoder` public API stable: `add_symbol`, `decode`, `rank`, `is_complete`, `last_rank`.
 - The decoder is incremental. Rank is exact after every `add_symbol`, so only call `decode()` once `rank == k`.
 - `vite build` does not type-check; run `npm run typecheck` (CI does).
-- iPhone Safari has no BarcodeDetector, so iPhones always use the ZXing fallback path in `startCamera`. Test changes there on a real phone.
+- QR decoding (`web/src/receiver/useScanner.ts`): the native `BarcodeDetector` where it exists; otherwise zxing-cpp compiled to WebAssembly via the `barcode-detector` ponyfill. iOS browsers (Safari *and* Chrome) never have the native detector, so iPhones always use the WASM path. The WASM is bundled and served from `/assets/`, not the package's CDN default. Don't reintroduce the ZXing JavaScript port: in testing it failed to find 3–31% of perfectly rendered dense codes.
+- To test the iPhone path in desktop Chrome, inject `delete window.BarcodeDetector` before page load. The receiver's Diagnostics section shows which decoder is active.
+- The receiver locks on the first valid sync frame and replays symbol frames seen before lock (`useTransfer`).
 - Payload sizes the demo should handle: 10KB–500KB raw (deflate shrinks logs ~7x). Check the timing of anything on the receive path; Pyodide runs on the main thread.

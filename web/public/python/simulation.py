@@ -36,7 +36,10 @@ DEFAULT_SEED = 1337
 
 SYNC_PREAMBLE_COUNT = 6
 SYNC_INSERT_INTERVAL = 8
-SYNC_CONFIRMATION_REQUIRED = 4
+# One valid sync frame is enough to lock: it is fully validated by
+# parse_sync_frame, and QR's own Reed-Solomon makes misreads negligible.
+# (Waiting for 4 distinct sync frames cost ~20 s on the first phone test.)
+SYNC_CONFIRMATION_REQUIRED = 1
 
 _CODEC_TO_WIRE = {"deflate": "D", "none": "N"}
 _WIRE_TO_CODEC = {v: k for k, v in _CODEC_TO_WIRE.items()}

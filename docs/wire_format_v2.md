@@ -22,7 +22,7 @@ Sync fields:
 - `codec`: `D` for deflate, `N` for none.
 - `SHA16`: the first 16 hex characters of the raw payload's SHA-256.
 - `ecc`, `interval_ms`, `frames_per_loop`, `symbols_per_loop`: sender settings. They don't affect decoding. They exist so receiver test reports are self-labeled and capture rate can be computed.
-- `ordinal/total`: position in the 6-frame sync cycle. Locking requires 4 distinct ordinals.
+- `ordinal/total`: position in the 6-frame sync cycle. The receiver locks on the first valid sync frame and replays any symbol frames it saw before that.
 
 Symbol fields:
 

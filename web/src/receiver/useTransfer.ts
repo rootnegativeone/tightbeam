@@ -13,6 +13,7 @@ export type RecoveredPayload = { text: string; isBase64: boolean };
 const DUPLICATE_WINDOW_MS = 400;
 const RESYNC_AFTER_MS = 4500;
 const ETA_WINDOW_MS = 8000;
+const MAX_EARLY_SYMBOLS = 600;
 
 /**
  * Receiver session state: sync lock, session metadata, decoder status and the
@@ -45,6 +46,8 @@ export const useTransfer = (call: CallPythonJson, onComplete: () => void) => {
   const lastValueRef = useRef<{ value: string; at: number } | null>(null);
   const lastSymbolAtRef = useRef<number | null>(null);
   const historyRef = useRef<{ at: number; rank: number }[]>([]);
+  // Data frames seen before the first sync frame; replayed once locked.
+  const earlySymbolsRef = useRef<string[]>([]);
   const completeRef = useRef(false);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
@@ -62,6 +65,7 @@ export const useTransfer = (call: CallPythonJson, onComplete: () => void) => {
     lastValueRef.current = null;
     lastSymbolAtRef.current = null;
     historyRef.current = [];
+    earlySymbolsRef.current = [];
     completeRef.current = false;
   }, []);
 
@@ -181,19 +185,32 @@ export const useTransfer = (call: CallPythonJson, onComplete: () => void) => {
 
       if (value.startsWith("Y:")) {
         const info = await call("receiver_parse_sync", value);
-        if (!info.error) {
-          await handleSync(info as SyncInfo);
+        if (info.error) {
+          return;
+        }
+        await handleSync(info as SyncInfo);
+        const session = metadataRef.current?.session_id.replace(/^TB-/, "");
+        const early = earlySymbolsRef.current;
+        earlySymbolsRef.current = [];
+        for (const frame of early) {
+          if (session && frame.split(":", 2)[1] === session) {
+            await handleSymbol(frame);
+          }
         }
         return;
       }
-      const current = lockRef.current;
-      const accepting =
-        metadataRef.current &&
-        (current.state === "locked" ||
-          (current.state === "acquiring" && current.progress > 0));
-      if (value.startsWith("S:") && accepting && !completeRef.current) {
-        await handleSymbol(value);
+      if (!value.startsWith("S:") || completeRef.current) {
+        return;
       }
+      if (!metadataRef.current) {
+        const early = earlySymbolsRef.current;
+        if (early.length < MAX_EARLY_SYMBOLS && !early.includes(value)) {
+          early.push(value);
+        }
+        return;
+      }
+      // Frames from another session are rejected by the Python side.
+      await handleSymbol(value);
     },
     [call, handleSync, handleSymbol],
   );

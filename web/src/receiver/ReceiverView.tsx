@@ -348,7 +348,9 @@ export const ReceiverView = ({ call }: Props) => {
           <div>
             <dt>Decoder</dt>
             <dd>
-              {scanner.info.decoder === "native" ? "BarcodeDetector" : "ZXing"}
+              {scanner.info.decoder === "native"
+                ? "BarcodeDetector (built in)"
+                : "zxing-cpp (WebAssembly)"}
             </dd>
           </div>
           <div>

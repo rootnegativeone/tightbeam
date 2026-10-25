@@ -1,41 +1,66 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type BarcodeDetectorLike = {
-  detect: (source: CanvasImageSource) => Promise<{ rawValue: string }[]>;
+type Detector = {
+  detect: (source: HTMLVideoElement) => Promise<{ rawValue: string }[]>;
 };
-type BarcodeDetectorCtor = new (options?: {
-  formats?: string[];
-}) => BarcodeDetectorLike;
+type DetectorCtor = new (options?: { formats?: string[] }) => Detector;
+
+const MAX_CONSECUTIVE_FAILURES = 30;
 
 export type CameraState = "idle" | "starting" | "running" | "error";
 export type Facing = "environment" | "user";
 
 export type ScannerInfo = {
-  decoder: "native" | "zxing";
+  decoder: "native" | "wasm";
   resolution: string | null;
   facing: Facing;
   detections: number;
 };
 
-const nativeDetector = () => {
-  const Detector = (
-    window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }
-  ).BarcodeDetector;
-  return Detector ? new Detector({ formats: ["qr_code"] }) : null;
+/**
+ * The browser's own BarcodeDetector where it exists (Chrome on Android and
+ * desktop); otherwise zxing-cpp compiled to WebAssembly (always the case on
+ * iPhone). The WASM decoder replaced the ZXing JavaScript port, which failed
+ * to find 3-31% of perfectly rendered dense codes in testing.
+ */
+const createDetector = async (): Promise<{
+  detector: Detector;
+  kind: ScannerInfo["decoder"];
+}> => {
+  const Native = (window as unknown as { BarcodeDetector?: DetectorCtor })
+    .BarcodeDetector;
+  if (Native) {
+    return { detector: new Native({ formats: ["qr_code"] }), kind: "native" };
+  }
+  const [{ BarcodeDetector, prepareZXingModule }, { default: wasmUrl }] =
+    await Promise.all([
+      import("barcode-detector/ponyfill"),
+      import("zxing-wasm/reader/zxing_reader.wasm?url"),
+    ]);
+  // Serve the WASM binary from this site rather than the package's CDN default.
+  prepareZXingModule({
+    overrides: {
+      locateFile: (path: string, prefix: string) =>
+        path.endsWith(".wasm") ? wasmUrl : prefix + path,
+    },
+    fireImmediately: true,
+  });
+  return {
+    detector: new BarcodeDetector({ formats: ["qr_code"] }) as Detector,
+    kind: "wasm",
+  };
 };
 
-/**
- * Camera + QR detection. Uses the native BarcodeDetector where available and
- * falls back to ZXing (always the case on iPhone Safari). Every decoded string
- * is passed to ``onValue``.
- */
+/** Camera + QR detection. Every decoded string is passed to ``onValue``. */
 export const useScanner = (
   onValue: (value: string) => void | Promise<void>,
 ) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
-  const stopZxingRef = useRef<(() => void) | null>(null);
+  const detectorRef = useRef<Awaited<ReturnType<typeof createDetector>> | null>(
+    null,
+  );
   const onValueRef = useRef(onValue);
   onValueRef.current = onValue;
   const [state, setState] = useState<CameraState>("idle");
@@ -47,18 +72,11 @@ export const useScanner = (
     detections: 0,
   });
 
-  const emit = useCallback((value: string) => {
-    setInfo((prev) => ({ ...prev, detections: prev.detections + 1 }));
-    return onValueRef.current(value);
-  }, []);
-
   const stop = useCallback(() => {
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
     }
-    stopZxingRef.current?.();
-    stopZxingRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -74,6 +92,9 @@ export const useScanner = (
       setError(null);
       setState("starting");
       try {
+        const detectorPromise = detectorRef.current
+          ? Promise.resolve(detectorRef.current)
+          : createDetector();
         const constraints = (mode: Facing) => ({
           video: {
             facingMode: { ideal: mode },
@@ -101,53 +122,51 @@ export const useScanner = (
         video.srcObject = stream;
         await video.play();
 
-        const detector = nativeDetector();
+        const { detector, kind } = (detectorRef.current =
+          await detectorPromise);
         setInfo({
-          decoder: detector ? "native" : "zxing",
+          decoder: kind,
           resolution: `${video.videoWidth}×${video.videoHeight}`,
           facing: used,
           detections: 0,
         });
 
-        if (detector) {
-          const loop = async () => {
-            if (!videoRef.current?.srcObject) return;
-            try {
-              for (const { rawValue } of await detector.detect(
-                videoRef.current,
-              )) {
-                if (rawValue) await emit(rawValue);
+        // Scan as fast as the decoder allows: each detect() is awaited, so a
+        // slow decode simply means fewer attempts, never a backlog.
+        let failures = 0;
+        const loop = async () => {
+          if (!videoRef.current?.srcObject) return;
+          try {
+            for (const { rawValue } of await detector.detect(
+              videoRef.current,
+            )) {
+              if (rawValue) {
+                setInfo((prev) => ({
+                  ...prev,
+                  detections: prev.detections + 1,
+                }));
+                await onValueRef.current(rawValue);
               }
-            } catch (err) {
-              console.warn("Barcode detection failed; retrying", err);
             }
-            rafRef.current = requestAnimationFrame(loop);
-          };
-          rafRef.current = requestAnimationFrame(loop);
-        } else {
-          const [browser, library] = await Promise.all([
-            import("@zxing/browser"),
-            import("@zxing/library"),
-          ]);
-          const reader = new browser.BrowserQRCodeReader();
-          // Decode from the stream already attached to <video> (the selected
-          // camera) and keep the controls so stop() actually halts scanning.
-          const controls = await reader.decodeFromVideoElement(
-            video,
-            (result, err) => {
-              if (result) {
-                void emit(result.getText());
-              } else if (err && !(err instanceof library.NotFoundException)) {
-                console.warn("ZXing scanner error", err);
-              }
-            },
-          );
-          if (video.srcObject === null) {
-            controls.stop(); // stopped while starting
-          } else {
-            stopZxingRef.current = () => controls.stop();
+            failures = 0;
+          } catch (err) {
+            // A decoder that keeps throwing (e.g. its WASM failed to load)
+            // would otherwise sit on "0 codes read" forever.
+            if (++failures >= MAX_CONSECUTIVE_FAILURES) {
+              console.error("QR decoder unavailable", err);
+              stop();
+              setState("error");
+              setError(
+                "The QR decoder couldn't load. Check the connection and try again.",
+              );
+              return;
+            }
           }
-        }
+          if (videoRef.current?.srcObject) {
+            rafRef.current = requestAnimationFrame(loop);
+          }
+        };
+        rafRef.current = requestAnimationFrame(loop);
         setState("running");
       } catch (err) {
         console.error(err);
@@ -160,7 +179,7 @@ export const useScanner = (
         );
       }
     },
-    [emit, info.facing, stop],
+    [info.facing, stop],
   );
 
   const flip = useCallback(() => {
