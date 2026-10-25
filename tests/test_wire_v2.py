@@ -2,12 +2,11 @@
 End-to-end checks for the v2 frame format produced and consumed by simulation.py.
 """
 
+import base64
 import json
 import os
 import random
 import sys
-
-import pytest
 
 _SIM_PATH = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "web", "public", "python")
@@ -40,28 +39,83 @@ def test_compressed_logs_round_trip_under_loss():
     assert meta["v"] == 2 and meta["codec"] == "deflate"
     assert meta["orig_len"] < len(payload) // 4
 
-    status = _feed(sim.ReceiverSession.from_metadata(meta), package["frames"], 0.2)
+    session = sim.ReceiverSession.from_metadata(meta)
+    status = _feed(session, package["frames"], 0.2)
     assert status["decode_complete"]
-    assert status["recovered_text"].encode() == payload
+    assert session.recovered_text.encode() == payload
     assert status["raw_len"] == len(payload)
+    assert len(status["blocks"]) == meta["k"]
+    assert set(status["blocks"]) <= {"1", "2"}
 
 
-def test_symbol_frames_use_only_qr_alphanumeric_characters():
+def test_block_states_distinguish_direct_and_repaired():
+    package = sim._prepare_package(os.urandom(224 * 20), seed=8)
+    session = sim.ReceiverSession.from_metadata(package["metadata"])
+    symbols = [f for f in package["frames"] if f["type"] == "symbol"]
+    k = package["metadata"]["k"]
+    # Lose systematic blocks 3 and 7; repair frames must fill exactly those.
+    for frame in symbols:
+        if frame["esi"] in (3, 7):
+            continue
+        status = session.add_frame(frame["qr_value"])
+        if frame["esi"] == k - 1:
+            assert status["blocks"][3] == "0" and status["blocks"][7] == "0"
+            assert status["blocks"].count("1") == k - 2
+        if status["decode_complete"]:
+            break
+    assert status["blocks"][3] == "2" and status["blocks"][7] == "2"
+
+
+def test_all_frames_use_only_qr_alphanumeric_characters():
     package = sim._prepare_package(os.urandom(3000), seed=1)
+    assert {f["type"] for f in package["frames"]} == {"sync", "symbol"}
     for frame in package["frames"]:
-        if frame["type"] == "symbol":
-            assert set(frame["qr_value"]) <= set(ALPHABET)
+        assert set(frame["qr_value"]) <= set(ALPHABET)
+
+
+def test_sync_frame_round_trips_metadata_and_stays_small():
+    package = sim._prepare_package(
+        generate_bulk_pos_logs(500 * 1024), seed=1, ecc="M", frame_interval_ms=300
+    )
+    meta = package["metadata"]
+    sync = next(f for f in package["frames"] if f["type"] == "sync")["qr_value"]
+    parsed = sim.parse_sync_frame(sync)
+    for key, value in meta.items():
+        assert parsed[key] == value, key
+    assert (parsed["ordinal"], parsed["total"]) == (1, 6)
+    # Must never need a bigger QR than the symbol frames do.
+    assert len(sync) < len(package["frames"][-1]["qr_value"]) // 3
+    assert sim.parse_sync_frame("Y:1:ABC") is None
+    assert sim.parse_sync_frame(sync.replace("Y:2:", "Y:3:", 1)) is None
+
+
+def test_capture_rate_reflects_frame_loss(monkeypatch):
+    package = sim._prepare_package(generate_bulk_pos_logs(60 * 1024), seed=2)
+    session = sim.ReceiverSession.from_metadata(package["metadata"])
+    interval = package["metadata"]["frame_interval_ms"] / 1000
+    clock = [100.0]
+    monkeypatch.setattr(sim, "perf_counter", lambda: clock[0])
+    status = None
+    for frame in package["frames"]:
+        clock[0] += interval
+        if frame["type"] != "symbol" or frame["esi"] % 4 == 3:  # lose 25%
+            continue
+        status = session.add_frame(frame["qr_value"])
+        if status["decode_complete"]:
+            break
+    assert status["decode_complete"]
+    assert 0.70 <= status["capture_rate"] <= 0.80
+    assert status["elapsed_s"] > 0
 
 
 def test_incompressible_binary_payload_returns_base64():
     payload = os.urandom(5000)
     package = sim._prepare_package(payload, seed=9)
     assert package["metadata"]["codec"] == "none"
-    status = _feed(
-        sim.ReceiverSession.from_metadata(package["metadata"]), package["frames"]
-    )
+    session = sim.ReceiverSession.from_metadata(package["metadata"])
+    status = _feed(session, package["frames"])
     assert status["recovered_is_base64"]
-    assert status["recovered_text"] == __import__("base64").b64encode(payload).decode()
+    assert session.recovered_text == base64.b64encode(payload).decode()
 
 
 def test_frames_from_another_session_are_rejected():
@@ -71,10 +125,10 @@ def test_frames_from_another_session_are_rejected():
     foreign = next(f for f in b["frames"] if f["type"] == "symbol")
     status = session.add_frame(foreign["qr_value"])
     assert not status["newly_added"]
-    assert status["metrics"]["rejected_symbols"] == {"session_mismatch": 1}
+    assert status["rejected"] == {"session_mismatch": 1}
 
     status = session.add_frame("S:NOTAFRAME")
-    assert status["metrics"]["rejected_symbols"]["malformed_frame"] == 1
+    assert status["rejected"]["malformed_frame"] == 1
 
 
 def test_digest_mismatch_fails_finalize():
@@ -85,14 +139,26 @@ def test_digest_mismatch_fails_finalize():
     assert "sha256" in status["finalize_error"]
 
 
+def test_browser_entry_points_round_trip():
+    package = json.loads(sim.prepare_broadcast(5, 96, "M", 300))
+    assert package["metadata"]["block_size"] == 96
+    sync = json.loads(sim.receiver_parse_sync(package["frames"][0]["qr_value"]))
+    assert json.loads(sim.reset_receiver(json.dumps(sync)))["status"] == "ready"
+    for frame in package["frames"]:
+        if frame["type"] == "symbol":
+            status = json.loads(sim.receiver_add_frame(frame["qr_value"]))
+    assert status["decode_complete"]
+    recovered = json.loads(sim.receiver_payload())
+    assert recovered["text"] == package["payload_text"]
+    assert "error" in json.loads(sim.prepare_broadcast(5, 100))
+    bulk = json.loads(sim.prepare_broadcast(5, 224, "H", 450, 10))
+    assert bulk["metadata"]["raw_len"] == 10 * 1024
+
+
 def test_reset_receiver_rejects_v1_metadata():
     v1 = {"block_size": 96, "k": 3, "orig_len": 200, "session_id": "TB-00000001"}
-    assert (
-        "unsupported frame version"
-        in json.loads(sim.reset_receiver(json.dumps(v1)))["error"]
-    )
-    v2 = sim._prepare_package(b"x" * 500, seed=5)["metadata"]
-    assert json.loads(sim.reset_receiver(json.dumps(v2)))["status"] == "ready"
+    error = json.loads(sim.reset_receiver(json.dumps(v1)))["error"]
+    assert "unsupported frame version" in error
 
 
 def test_parse_symbol_frame_handles_base45_separators():

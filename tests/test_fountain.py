@@ -2,6 +2,8 @@
 Property-based and functional tests for fountain module.
 """
 
+import random
+
 import pytest
 from common.fountain.encoder import LTEncoder
 from decoder.reassembler import LTDecoder
@@ -43,6 +45,7 @@ def test_round_trip_with_redundancy(block_size, payload):
     symbols.extend(encoder.encode(n=k))  # Add k more random symbols
 
     # Apply burst erasure
+    random.seed(3)  # burst_eraser draws from the global RNG
     received = burst_eraser(symbols, loss_rate=0.2, burst_len=2)
 
     decoder = LTDecoder(block_size, k, orig_len=len(payload))

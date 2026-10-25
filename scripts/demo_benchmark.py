@@ -50,7 +50,7 @@ def run_benchmark(
         status = session._status_dict(redundant=False, newly_added=False)
     complete = bool(status.get("decode_complete"))
     if complete:
-        assert status["recovered_text"].encode("utf-8") == payload
+        assert session.recovered_text.encode("utf-8") == payload
     return {
         "raw_len": len(payload),
         "wire_len": metadata["orig_len"],
@@ -59,7 +59,7 @@ def run_benchmark(
         "simulated_time_s": round(simulated_time, 1),
         "frames_per_k": round(simulated_time / frame_interval / metadata["k"], 2),
         "complete": complete,
-        "decode_ms": status.get("last_decode_duration_ms"),
+        "decode_ms": status.get("decode_ms"),
     }
 
 
