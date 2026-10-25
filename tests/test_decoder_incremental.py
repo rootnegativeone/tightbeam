@@ -16,7 +16,7 @@ def _random_payload(rng: random.Random, size: int) -> bytes:
 def test_rank_ignores_duplicate_and_dependent_symbols():
     rng = random.Random(7)
     payload = _random_payload(rng, 4 * 16)
-    encoder = LTEncoder(payload, 16, systematic=True, rng=rng)
+    encoder = LTEncoder(payload, 16, systematic=True, seed=7)
     blocks = encoder.blocks
     decoder = LTDecoder(16, encoder.k, len(payload))
 
@@ -45,7 +45,7 @@ def test_rank_ignores_duplicate_and_dependent_symbols():
 def test_rank_is_monotonic_and_reaches_k():
     rng = random.Random(11)
     payload = _random_payload(rng, 3000)
-    encoder = LTEncoder(payload, 32, systematic=False, rng=rng)
+    encoder = LTEncoder(payload, 32, systematic=False, seed=7)
     decoder = LTDecoder(32, encoder.k, len(payload))
 
     last_rank = 0
@@ -62,7 +62,7 @@ def test_rank_is_monotonic_and_reaches_k():
 def test_large_payload_decodes_quickly_under_loss():
     rng = random.Random(1337)
     payload = _random_payload(rng, 100 * 1024)
-    encoder = LTEncoder(payload, 96, systematic=True, integrity_check=True, rng=rng)
+    encoder = LTEncoder(payload, 96, systematic=True, integrity_check=True, seed=7)
     symbols = list(encoder.emit_systematic()) + encoder.encode(encoder.k)
     received = [s for s in symbols if rng.random() > 0.15]
 

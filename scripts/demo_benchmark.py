@@ -6,8 +6,9 @@ import sys
 def load_simulation():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     sim_path = os.path.join(repo_root, "web", "public", "python")
-    # simulation.py imports `common`, which lives at the repo root.
-    for path in (repo_root, sim_path):
+    # simulation.py imports `common`; the repo root copy must win over any
+    # generated web/public/python/common left behind by a web build.
+    for path in (sim_path, repo_root):
         if path not in sys.path:
             sys.path.insert(0, path)
     import simulation as sim  # type: ignore
@@ -16,72 +17,66 @@ def load_simulation():
 
 
 def run_benchmark(
-    sim, loss_rate: float, seed: int = 1337, frame_interval: float = 0.45
+    sim,
+    payload: bytes,
+    loss_rate: float,
+    seed: int = 1337,
+    frame_interval: float = 0.45,
+    max_loops: int = 5,
 ):
-    payload = ("A" * (10 * 1024)).encode("utf-8")
+    """
+    Replay the looping broadcast (sync + metadata + symbol frames) at a fixed
+    cadence, dropping each frame with probability ``loss_rate``.
+    """
+    rng = random.Random(seed)
     package = sim._prepare_package(payload, seed=seed)
     metadata = package["metadata"]
-    session = sim.ReceiverSession(
-        block_size=metadata["block_size"],
-        k=metadata["k"],
-        orig_len=metadata["orig_len"],
-        integrity_check=metadata.get("integrity_check", True),
-    )
+    session = sim.ReceiverSession.from_metadata(metadata)
 
-    frames = [frame for frame in package["frames"] if frame["type"] == "symbol"]
     simulated_time = 0.0
-    last_progress_time = 0.0
-    max_stall = 0.0
     status = None
-
-    for frame in frames:
-        if random.random() < loss_rate:
+    for _ in range(max_loops):
+        for frame in package["frames"]:
             simulated_time += frame_interval
-            continue
-        status = session.add_symbol(
-            frame["sequence"], frame["indices"], frame["payload_hex"]
-        )
-        simulated_time += frame_interval
-        if status.get("newly_added"):
-            max_stall = max(max_stall, simulated_time - last_progress_time)
-            last_progress_time = simulated_time
-        if status.get("decode_complete"):
+            if frame["type"] != "symbol" or rng.random() < loss_rate:
+                continue
+            status = session.add_frame(frame["qr_value"])
+            if status.get("decode_complete"):
+                break
+        if status and status.get("decode_complete"):
             break
 
     if status is None:
         status = session._status_dict(redundant=False, newly_added=False)
-
-    accepted = status.get("accepted_symbols_total", 0)
-    symbols_per_sec = accepted / simulated_time if simulated_time else 0.0
+    complete = bool(status.get("decode_complete"))
+    if complete:
+        assert status["recovered_text"].encode("utf-8") == payload
     return {
+        "raw_len": len(payload),
+        "wire_len": metadata["orig_len"],
+        "k": metadata["k"],
         "loss_rate": loss_rate,
-        "simulated_time_s": round(simulated_time, 2),
-        "symbols_per_sec": round(symbols_per_sec, 2),
-        "max_stall_s": round(max_stall, 2),
-        "decode_complete": status.get("decode_complete"),
-        "accepted_symbols": accepted,
-        "unique_indices": status.get("accepted_unique_symbols"),
-        "k": status.get("k"),
-        "last_decode_attempt_ms": status.get("last_decode_attempt_ms"),
-        "last_decode_duration_ms": status.get("last_decode_duration_ms"),
+        "simulated_time_s": round(simulated_time, 1),
+        "frames_per_k": round(simulated_time / frame_interval / metadata["k"], 2),
+        "complete": complete,
+        "decode_ms": status.get("last_decode_duration_ms"),
     }
 
 
 def main():
-    random.seed(1337)
     sim = load_simulation()
-    for loss in (0.0, 0.10):
-        result = run_benchmark(sim, loss)
-        print(
-            f"loss={result['loss_rate']:.0%} "
-            f"time={result['simulated_time_s']}s "
-            f"sym/s={result['symbols_per_sec']} "
-            f"stall_max={result['max_stall_s']}s "
-            f"accepted={result['accepted_symbols']}/{result['k']} "
-            f"complete={result['decode_complete']} "
-            f"last_decode={result['last_decode_attempt_ms']}ms "
-            f"decode_dur={result['last_decode_duration_ms']}ms"
-        )
+    from common.shared.demo_payloads import generate_bulk_pos_logs
+
+    for size_kb in (10, 100, 500):
+        payload = generate_bulk_pos_logs(size_kb * 1024)
+        for loss in (0.0, 0.15, 0.30):
+            r = run_benchmark(sim, payload, loss)
+            print(
+                f"raw={r['raw_len'] // 1024}KB wire={r['wire_len']}B k={r['k']} "
+                f"loss={r['loss_rate']:.0%} time={r['simulated_time_s']}s "
+                f"frames/k={r['frames_per_k']} complete={r['complete']} "
+                f"decode={r['decode_ms']}ms"
+            )
 
 
 if __name__ == "__main__":

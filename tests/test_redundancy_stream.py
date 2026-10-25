@@ -10,7 +10,7 @@ def test_redundancy_stream_not_systematic_duplicates():
         block_size=48,
         systematic=True,
         integrity_check=True,
-        rng=random.Random(1337),
+        seed=1337,
     )
 
     systematic_symbols = list(encoder.emit_systematic())
