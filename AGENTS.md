@@ -18,7 +18,7 @@ pip install -r requirements-dev.txt
 pytest -q
 black --check . && mypy common/fountain
 python scripts/demo_assert_complete.py
-cd web && npm install && npm run dev     # or: npm run build
+cd web && npm install && npm run dev     # or: npm run typecheck / npm run build
 ```
 CI (`.github/workflows/ci.yml`) runs all of the above plus the web build.
 
@@ -37,4 +37,6 @@ Producer: `simulation._prepare_package`. Consumer: `App.tsx` `processValue` → 
 - Never use the module-global `random`. The encoder is deterministic given `seed`; anything else random takes a `random.Random` instance.
 - Keep the `LTDecoder` public API stable: `add_symbol`, `decode`, `rank`, `is_complete`, `last_rank`.
 - The decoder is incremental. Rank is exact after every `add_symbol`, so only call `decode()` once `rank == k`.
+- `vite build` does not type-check; run `npm run typecheck` (CI does).
+- iPhone Safari has no BarcodeDetector, so iPhones always use the ZXing fallback path in `startCamera`. Test changes there on a real phone.
 - Payload sizes the demo should handle: 10KB–500KB raw (deflate shrinks logs ~7x). Check the timing of anything on the receive path; Pyodide runs on the main thread.
